@@ -15,8 +15,6 @@ def setup_state_2_hello_2way(target, fuzz_data_logger, session, *args, **kwargs)
     params = simulator.run()
 
     # Store on session — accessible in all subsequent callbacks
-    session.ospf_param = params
-    fuzz_data_logger.log_info(f"Stored OSPF param: router_id={params['router_id']}")
     
     original_send = target.send
     
@@ -70,5 +68,35 @@ def setup_state_2_hello_2way(target, fuzz_data_logger, session, *args, **kwargs)
 def setup_state_3_ExStart(target, fuzz_data_logger, session, *args, **kwargs):
     fuzz_data_logger.log_info("Preamble: Advancing to State 2.")
     simulator = OSPFSimulator(func="reach_state_2way")
-    param = simulator.run()
+    params = simulator.run()
+
+    original_send = target.send
+    
+    def patched_send(data):
+        data = bytearray(data) 
+        
+        # Verify it's an OSPFv2 packet and has at least the minimum header size
+        if len(data) >= 24 and data[0] == 2:
+            
+            # --- 1. Patch Header Fields via external function ---
+            # We pass both the mutable 'data' array and the 'params' dictionary
+            router_id, area_id = fix_header(data, params)
+
+            # --- 2. Dynamically Update Length (Offset 2, 2 bytes) ---
+            struct.pack_into("!H", data, 2, len(data))
+
+            # --- 3. Clear and Recalculate OSPF Checksum (Offset 12, 2 bytes) ---
+            data[12] = 0
+            data[13] = 0
+            checksum = ospf_checksum(bytes(data))
+            data[12:14] = checksum
+            
+            fuzz_data_logger.log_info(
+                f"Patched OSPF Header -> RID: {router_id}, Area: {area_id}, Checksum: {checksum.hex()}"
+            )
+            
+        return original_send(bytes(data))
+        
+    target.send = patched_send
+
     

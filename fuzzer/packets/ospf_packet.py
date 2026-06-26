@@ -1,7 +1,7 @@
 from boofuzz import *
 import socket
 from config import *
-from .ospf_header import define_ospf_header,_ip_to_dword
+from .ospf_header import define_ospf_header
 
 #fuzzable=false : go to next state faster
 def define_hello_init():
