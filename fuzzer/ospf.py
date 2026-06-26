@@ -54,7 +54,7 @@ def fuzzing(state):
         target=target,
         sleep_time=2,
         fuzz_loggers=[FuzzLoggerText()],
-        pre_send_callbacks=[update_ospf_packet],
+        # pre_send_callbacks=[update_ospf_packet],
         post_test_case_callbacks=[reset_target_state],
         receive_data_after_fuzz=True 
     )

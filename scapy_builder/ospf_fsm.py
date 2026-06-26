@@ -44,6 +44,32 @@ class OSPFStateMachine:
                 time.sleep(self.retry_timeout)
         print(f"[-] Failed to reach {state_name} after {self.max_retries} attempts")
         return False
+    
+    def get_neighbor_params(self) -> dict:
+        """
+        Return all captured neighbor parameters as a dictionary.
+        These parameters are extracted during INIT state by sniffing the target's Hello packet.
+        
+        Returns:
+            dict: Dictionary containing all OSPF neighbor parameters, or empty dict if not yet captured
+        """
+        if not self.neighbor_params:
+            return {}
+        
+        return {
+            'router_id': self.neighbor.target_router_id,
+            'area_id': self.neighbor.area_id,
+            'network_mask': getattr(self.neighbor, 'network_mask', None),
+            'hello_interval': getattr(self.neighbor, 'hello_interval', None),
+            'router_priority': self.neighbor.target_priority,
+            'router_dead_interval': getattr(self.neighbor, 'dead_interval', None),
+            'designated_router': self.neighbor.target_dr,
+            'backup_designated_router': self.neighbor.target_bdr,
+            'auth_type': getattr(self.neighbor, 'auth_type', None),
+            'auth_data': getattr(self.neighbor, 'auth_data', None),
+            'src_ip': self.neighbor.target_ip,
+            'dst_ip': getattr(self.neighbor, 'dst_ip', None)
+        }
 
     def reach_state_init(self) -> bool:
         """

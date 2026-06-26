@@ -113,7 +113,7 @@ class OSPFSimulator:
         """Callback invoked on neighbor state transitions"""
         logger.info(f"[STATE] {old_state.name} → {new_state.name}")
     
-    def run(self) -> bool:
+    def run(self) -> dict:
         """
         Execute the main simulation
         
@@ -121,7 +121,7 @@ class OSPFSimulator:
             True if Full adjacency achieved and maintained, False otherwise
         """
         if not self.initialize():
-            return False
+            return {}
         
         self.running = True
         
@@ -140,29 +140,22 @@ class OSPFSimulator:
             
             if not success:
                 logger.error("[-] Failed to reach FULL state")
-                return False
+                return {}
+            
+            param=self.fsm.get_neighbor_params() # type: ignore
             
             logger.info("[+] FULL adjacency established!")
             logger.info("")
             logger.info("=" * 60)
             logger.info("Adjacency is now active. Heartbeat running.")
-            logger.info("Press Ctrl+C to stop.")
             logger.info("=" * 60)
             
             # Monitor adjacency health
             # self._monitor_adjacency()
             
-            return True
+            return param
             
-        except KeyboardInterrupt:
-            logger.warning("\n[!] User interrupted")
-            return False
-            
-        except Exception as e:
-            logger.error(f"[-] Runtime error: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+        
             
         finally:
             self.shutdown()
