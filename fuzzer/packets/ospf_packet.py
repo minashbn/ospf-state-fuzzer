@@ -1,23 +1,23 @@
 from boofuzz import *
 import socket
 from config import *
-from .ospf_header import *
+from .ospf_header import define_ospf_header,_ip_to_dword
 
 #fuzzable=false : go to next state faster
 def define_hello_init():
     s_initialize("hello_init")
     define_ospf_header("hello") 
         
-    with s_block("init_hello_body"):
-        s_dword(0xFFFFFF00, name="init_netmask", fuzzable=False, endian='>')
-        s_word(10, name="init_hello_interval", fuzzable=False, endian='>')
-        s_byte(0x02, name="init_options", fuzzable=False)
-        s_byte(1, name="init_priority", fuzzable=False)
-        s_dword(40, name="init_dead_interval", fuzzable=False, endian='>')
-        s_dword(0x00000000, name="init_dr", fuzzable=False, endian='>')
-        s_dword(0x00000000, name="init_bdr", fuzzable=True, endian='>')
+    with s_block("hello_body"):
+        s_dword(0xFFFFFF00, name="netmask", fuzzable=False, endian='>')
+        s_word(10, name="hello_interval", fuzzable=False, endian='>')
+        s_byte(0x02, name="options", fuzzable=False)
+        s_byte(1, name="priority", fuzzable=False)
+        s_dword(40, name="dead_interval", fuzzable=False, endian='>')
+        s_dword(0x00000000, name="dr", fuzzable=False, endian='>')
+        s_dword(0x00000000, name="bdr", fuzzable=True, endian='>')
 
-def define_hello_2way():
+def define_hello_2way(params: dict = None): # type: ignore
     s_initialize("hello_2way")
     define_ospf_header("hello") 
     with s_block("way_hello_body"):
