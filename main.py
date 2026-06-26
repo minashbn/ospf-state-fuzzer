@@ -1,3 +1,4 @@
 from fuzzer.ospf import *
 
-fuzzing(2)
+fuzzing(3)
+    

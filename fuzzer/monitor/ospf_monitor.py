@@ -11,18 +11,18 @@ class FRRMonitor(BaseMonitor):
         self.agent_url = f"http://{agent_ip}:{agent_port}"
         self.name = "FRRMonitor"
         
-    def alive(self) -> bool:  # type: ignore[override]
-        """
-        Called once when the Monitor is attached to the session.
-        Ensures Boofuzz can talk to our agent before starting the fuzzing run.
-        """
-        try:
-            response = requests.get(f"{self.agent_url}/health", timeout=2)
-            print(f"{self.agent_url}/health")
+    # def alive(self) -> bool:  # type: ignore[override]
+    #     """
+    #     Called once when the Monitor is attached to the session.
+    #     Ensures Boofuzz can talk to our agent before starting the fuzzing run.
+    #     """
+    #     try:
+    #         response = requests.get(f"{self.agent_url}/health", timeout=2)
+    #         print(f"{self.agent_url}/health")
 
-            return response.status_code == 200
-        except Exception:
-            return False
+    #         return response.status_code == 200
+    #     except Exception:
+    #         return False
 
 
     def post_send(self, target=None, fuzz_data_logger=None, session=None) ->bool: # type: ignore[override]

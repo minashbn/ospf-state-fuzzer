@@ -21,13 +21,14 @@ def define_hello_2way():
     s_initialize("hello_2way")
     define_ospf_header("hello") 
     with s_block("way_hello_body"):
+        # extract the valid value for fuzzable=false whitin scapy 
         s_dword(0xFFFFFF00, name="way_netmask", fuzzable=False, endian='>')
         s_word(10, name="way_hello_interval", fuzzable=False, endian='>')
         s_byte(0x02, name="way_options", fuzzable=True) 
-        s_byte(1, name="way_priority", fuzzable=False)
+        s_byte(1, name="way_priority", fuzzable=True)
         s_dword(40, name="way_dead_interval", fuzzable=False, endian='>')
-        s_dword(0, name="way_dr", fuzzable=False, endian='>')
-        s_dword(0, name="way_bdr", fuzzable=False, endian='>')
+        s_dword(0, name="way_dr", fuzzable=True, endian='>')
+        s_dword(0, name="way_bdr", fuzzable=True, endian='>')
         
         s_bytes(socket.inet_aton(TARGET_ROUTER_ID), name="way_neighbor_router_id", size=4, fuzzable=False)
 
