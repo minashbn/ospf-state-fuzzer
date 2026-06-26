@@ -108,6 +108,10 @@ class OSPFStateMachine:
             
             # Step 5: Update neighbor state
             self.neighbor.target_router_id = hello_data['router_id']
+            self.neighbor.area_id=self.neighbor_params['area_id']
+            self.neighbor.network_mask=self.neighbor_params['network_mask']
+            self.neighbor.hello_interval=self.neighbor_params['hello_interval']
+            self.neighbor.dead_interval=self.neighbor_params['dead_interval']
             self.neighbor.target_priority = hello_data['priority']
             self.neighbor.target_dr = hello_data['dr']
             self.neighbor.target_bdr = hello_data['bdr']
