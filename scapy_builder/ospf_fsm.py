@@ -10,7 +10,7 @@ from config import *
 from .ospf_packets import *
 from .ospf_handler import *
 from .ospf_neighbor import OSPFState
-
+import ipaddress
 
 
 
@@ -33,17 +33,41 @@ class OSPFStateMachine:
         sendp(pkt, iface=IFACE, verbose=False)
         
     def _retry_wrapper(self, func, state_name: str):
-        """Retry logic for state transitions"""
-        for attempt in range(1, self.max_retries + 1):
-            print(f"[*] Attempting {state_name} (attempt {attempt}/{self.max_retries})")
-            if func():
-                print(f"[+] {state_name} reached successfully")
-                return True
-            if attempt < self.max_retries:
-                print(f"[!] Retry {state_name} in {self.retry_timeout}s...")
-                time.sleep(self.retry_timeout)
-        print(f"[-] Failed to reach {state_name} after {self.max_retries} attempts")
-        return False
+            """Retry logic for state transitions with full DOWN reset on failure"""
+            for attempt in range(1, self.max_retries + 1):
+                print(f"[*] Attempting {state_name} (attempt {attempt}/{self.max_retries})")
+                if func():
+                    print(f"[+] {state_name} reached successfully")
+                    return True
+                    
+                # اگر این تلاش به هر دلیلی شکست خورد:
+                if attempt < self.max_retries:
+                    print(f"[!] {state_name} failed. Hard-resetting state machine to DOWN for the next attempt...")
+                    self._hard_reset_to_down()
+                    print(f"[!] Retry {state_name} in {self.retry_timeout}s...")
+                    time.sleep(self.retry_timeout)
+                    
+            print(f"[-] Failed to reach {state_name} after {self.max_retries} attempts")
+            self._hard_reset_to_down() # ریسِت نهایی در صورت شکست کل تلاش‌ها
+            return False
+
+    def _hard_reset_to_down(self):
+        """Completely wipes the neighbor context and forces OSPF State to DOWN"""
+        self.neighbor.set_state(OSPFState.DOWN)
+        self.neighbor_params = None
+        
+        # پاکسازی متغیرهای شناسایی روتر مقابل
+        self.neighbor.target_router_id = None
+        self.neighbor.target_priority = None
+        self.neighbor.target_dr = None
+        self.neighbor.target_bdr = None
+        
+        # پاکسازی متغیرهای فاز تبادل (ExStart/Exchange)
+        self.neighbor.dd_sequence = None
+        self.neighbor.target_dd_sequence = None
+        self.neighbor.master = None
+        self.neighbor.received_lsa_headers = []
+        print("[*] State machine context has been completely cleared (Fresh Start).")
     
     def get_neighbor_params(self) -> dict:
         """
@@ -256,19 +280,18 @@ class OSPFStateMachine:
                 return False
             
             # Determine master/slave by comparing Router IDs
-            our_rid_int = int(self.neighbor.our_router_id.replace('.', ''))
-            target_rid_int = int(self.neighbor.target_router_id.replace('.', ''))
-            
-            if our_rid_int > target_rid_int:
+            our_rid = ipaddress.IPv4Address(self.neighbor.our_router_id)
+            target_rid = ipaddress.IPv4Address(self.neighbor.target_router_id)
+
+            if our_rid > target_rid:
                 self.neighbor.master = True
                 self.neighbor.target_dd_sequence = dbd_data['seq']
-                print(f"[+] We are MASTER (our RID {our_rid_int} > target RID {target_rid_int})")
+                print(f"[+] We are MASTER (our RID {our_rid} > target RID {target_rid})")
             else:
                 self.neighbor.master = False
                 self.neighbor.dd_sequence = dbd_data['seq']
                 self.neighbor.target_dd_sequence = dbd_data['seq']
-                print(f"[+] We are SLAVE (our RID {our_rid_int} < target RID {target_rid_int})")
-            
+                print(f"[+] We are SLAVE (our RID {our_rid} < target RID {target_rid})")
             self._send_packet(dbd_pkt)
             print("[+] Sent initial DBD (I-M-MS)")
             # Store received LSA headers
