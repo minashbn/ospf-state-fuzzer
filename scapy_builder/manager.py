@@ -88,8 +88,6 @@ class OSPFSimulator:
                 target_ip=TARGET_ROUTER_IP
             )
             
-            # Register state change callback
-            self.neighbor.register_state_callback(OSPFState.DOWN,self._on_state_change)
             
             # Create packet handler
             self.handler = OSPFPacketHandler(
@@ -109,9 +107,6 @@ class OSPFSimulator:
             logger.error(f"[-] Initialization failed: {e}")
             return False
     
-    def _on_state_change(self, old_state: OSPFState, new_state: OSPFState):
-        """Callback invoked on neighbor state transitions"""
-        logger.info(f"[STATE] {old_state.name} → {new_state.name}")
     
     def run(self) -> dict:
         """
@@ -228,8 +223,8 @@ def main():
             sys.exit(1)
     
     # Create and run simulator
-    # simulator = OSPFSimulator()
-    # success = simulator.run()
+    simulator = OSPFSimulator(func="reach_state_exstart")
+    success = simulator.run()
     
     # Exit with appropriate code
     # sys.exit(0 if success else 1)

@@ -4,13 +4,13 @@ from .utils import *
 from boofuzz import REQUESTS
 import socket
 import struct
-
+from config import FUZZING_PHASE
 
 
 
 
 def setup_state_2_hello_2way(target, fuzz_data_logger, session, *args, **kwargs):
-    fuzz_data_logger.log_info("Preamble: Advancing to State 2.")
+    fuzz_data_logger.log_info("Preamble: Advancing to State init.")
     simulator = OSPFSimulator(func="reach_state_init")
     params = simulator.run()
 
@@ -66,9 +66,10 @@ def setup_state_2_hello_2way(target, fuzz_data_logger, session, *args, **kwargs)
 
 
 def setup_state_3_ExStart(target, fuzz_data_logger, session, *args, **kwargs):
-    fuzz_data_logger.log_info("Preamble: Advancing to State 2.")
+    fuzz_data_logger.log_info("Preamble: Advancing to State 2way.")
     simulator = OSPFSimulator(func="reach_state_2way")
     params = simulator.run()
+    
 
     original_send = target.send
     
@@ -99,4 +100,74 @@ def setup_state_3_ExStart(target, fuzz_data_logger, session, *args, **kwargs):
         
     target.send = patched_send
 
+
+def setup_state_4_Exchange(target, fuzz_data_logger, session, *args, **kwargs):
+    fuzz_data_logger.log_info("Preamble: Advancing to State Exstart.")
+    simulator = OSPFSimulator(func="reach_state_exstart")
+    params = simulator.run()
+
+    original_send = target.send
     
+    def patched_send(data):
+        data = bytearray(data) 
+        
+        # Verify it's an OSPFv2 packet and has at least the minimum header size
+        if len(data) >= 24 and data[0] == 2:
+            
+            # --- 1. Patch Header Fields via external function ---
+            router_id, area_id = fix_header(data, params)
+
+            # --- 2. Patch Live DBD State Machine Parameters ---
+            dbd_flags = params.get('dbd_flags', 0x02)
+            dd_seq = params.get('dd_seq_number', 0x00000001)
+
+            if len(data) >= 32 and FUZZING_PHASE == "LSA_PARSING":
+                struct.pack_into("!B", data, 27, dbd_flags)
+                struct.pack_into("!I", data, 28, dd_seq)
+            
+            # --- 3. Calculate and Patch LSA Header Parameters ---
+            if len(data) >= 52:  # 32 (offset) + 20 (minimum LSA header size)
+                lsa_start_offset = 32
+                
+                # 1. Read the LSA Type dynamically from the packet (Offset 35)
+                lsa_type = data[35] 
+                
+                # 2. Compute the physical length in our buffer
+                lsa_total_length = len(data) - lsa_start_offset
+                
+                # 3. Adjust length based on OSPF specifications
+                if lsa_type == 1 and lsa_total_length == 20:
+                    lsa_total_length = 24
+                elif lsa_type == 2 and lsa_total_length == 20:
+                    lsa_total_length = 24
+
+                # 4. FIX: Write LSA Length dynamically to the correct offset (50)
+                struct.pack_into("!H", data, 50, lsa_total_length)
+                
+                # 5. FIX: Zero out the correct LSA checksum bytes (Offsets 48, 49)
+                data[48] = 0
+                data[49] = 0
+                
+                # 6. Extract the LSA block to compute Fletcher Checksum
+                lsa_bytes = data[lsa_start_offset:]
+                lsa_chk = fletcher16_ospf_lsa(lsa_bytes)
+                
+                # 7. FIX: Write the freshly calculated LSA Checksum to the correct offset (48)
+                data[48:50] = lsa_chk
+                
+                fuzz_data_logger.log_info(f"Patched LSA -> Type: {lsa_type}, Set Length: {lsa_total_length}, Fletcher Chk: {lsa_chk.hex()}")
+            # --- 4. Dynamically Update Global OSPF Packet Length (Offset 2, 2 bytes) ---
+            struct.pack_into("!H", data, 2, len(data))
+
+            # --- 5. Clear and Recalculate Global OSPF Checksum (Offset 12, 2 bytes) ---
+            data[12] = 0
+            data[13] = 0
+            checksum = ospf_checksum(bytes(data))
+            data[12:14] = checksum
+            
+            fuzz_data_logger.log_info(
+                f"Patched OSPF Header -> RID: {router_id}, Area: {area_id}, Checksum: {checksum.hex()}"
+            )
+            
+        return original_send(bytes(data))
+    target.send = patched_send

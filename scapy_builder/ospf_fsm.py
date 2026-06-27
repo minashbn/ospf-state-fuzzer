@@ -92,7 +92,11 @@ class OSPFStateMachine:
             'auth_type': getattr(self.neighbor, 'auth_type', None),
             'auth_data': getattr(self.neighbor, 'auth_data', None),
             'src_ip': self.neighbor.target_ip,
-            'dst_ip': getattr(self.neighbor, 'dst_ip', None)
+            'dst_ip': getattr(self.neighbor, 'dst_ip', None),
+
+            # FIX: Include the negotiated state parameters for BoFuzz to pick up
+            'dbd_flags': getattr(self.neighbor, 'next_dbd_flags', 0x02),
+            'dd_seq_number': getattr(self.neighbor, 'next_dd_seq', 0x00000001)
         }
 
     def reach_state_init(self) -> bool:
@@ -287,11 +291,15 @@ class OSPFStateMachine:
                 self.neighbor.master = True
                 self.neighbor.target_dd_sequence = dbd_data['seq']
                 print(f"[+] We are MASTER (our RID {our_rid} > target RID {target_rid})")
+                self.neighbor.next_dbd_flags = 0x01
+                self.neighbor.next_dd_seq = self.neighbor.dd_sequence
             else:
                 self.neighbor.master = False
                 self.neighbor.dd_sequence = dbd_data['seq']
                 self.neighbor.target_dd_sequence = dbd_data['seq']
                 print(f"[+] We are SLAVE (our RID {our_rid} < target RID {target_rid})")
+                self.neighbor.next_dbd_flags = 0x00 
+                self.neighbor.next_dd_seq = dbd_data['seq']
             self._send_packet(dbd_pkt)
             print("[+] Sent initial DBD (I-M-MS)")
             # Store received LSA headers
