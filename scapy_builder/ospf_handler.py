@@ -29,6 +29,14 @@ class OSPFPacketHandler:
             4: None,  # LSU
             5: None   # LSAck
         }
+
+        self.queues = {
+            1: Queue(), # Hello
+            2: Queue(), # DBD
+            3: Queue(), # LSR
+            4: Queue(), # LSU
+            5: Queue()  # LSAck
+        }
         
         self.lock = threading.Lock()
     
@@ -65,6 +73,11 @@ class OSPFPacketHandler:
         
         ospf_hdr = pkt[OSPF_Hdr]
         packet_type = ospf_hdr.type
+        
+        #save all of the packet
+        if packet_type in self.queues:
+            self.queues[packet_type].put(pkt)
+
         
         # Get registered callback for this packet type
         with self.lock:
@@ -121,32 +134,14 @@ class OSPFPacketHandler:
         
         print("[+] OSPF packet handler stopped")
     
-    def wait_for_packet(self, packet_type: int, timeout: int = 10) -> Packet :
-        """
-        Synchronous wait for specific OSPF packet type
-        Returns packet or None on timeout
-        """
-        result = {'packet': None}
-        event = threading.Event()
-        
-        def capture_callback(pkt):
-            result['packet'] = pkt
-            event.set()
-        
-        # Temporarily register callback
-        original_callback = None
-        with self.lock:
-            original_callback = self.callbacks.get(packet_type)
-            self.callbacks[packet_type] = capture_callback
-        
-        # Wait for packet or timeout
-        event.wait(timeout)
-        
-        # Restore original callback
-        with self.lock:
-            self.callbacks[packet_type] = original_callback
-        
-        return result['packet'] # type: ignore
+    def wait_for_packet(self, packet_type: int, timeout: int = 10):
+        try:
+            # متد get در Queue پایتون خودش منطق "صبر" را دارد.
+            # اگر صف پر باشد، فوراً برمی‌گرداند.
+            # اگر خالی باشد، تا زمان timeout منتظر می‌ماند.
+            return self.queues[packet_type].get(block=True, timeout=timeout)
+        except Empty:
+            return None
 
 
 # Packet parsing utilities
