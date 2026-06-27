@@ -18,3 +18,6 @@ AGENT_PORT = 26000
 TARGET_ROUTER_ID = "1.1.1.1"
 AREA_ID = "0.0.0.0"
 AUTH_TYPE = 0 # 0 = Null Authentication
+
+#Exchang fuzzing
+FUZZING_PHASE = "LSA_PARSING"  # "LSA_PARSING" / "DBD_FRAMEWORK"

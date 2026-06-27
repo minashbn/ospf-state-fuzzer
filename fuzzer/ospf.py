@@ -20,8 +20,8 @@ from .monitor.ospf_monitor import *
 STATE_HANDLERS = {
     1: (define_hello_init, "hello_init", None,0),
     2: (define_hello_2way, "hello_2way", setup_state_2_hello_2way,10.1),
-    3: (define_dbd_ExStart, "ospf_ExStart",setup_state_3_ExStart,10.1)
-    # 4: (define_dd_exchange, "dd_exchange", setup_state_4_exchange),
+    3: (define_dbd_ExStart, "ospf_ExStart",setup_state_3_ExStart,10.1),
+    4: (define_dbd_ExChange, "dbd_Exchange", setup_state_4_Exchange,10.1),
 }
 
 
