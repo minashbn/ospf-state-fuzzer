@@ -11,7 +11,7 @@ from .ospf_packets import *
 from .ospf_handler import *
 from .ospf_neighbor import OSPFState
 import ipaddress
-
+from scapy.contrib.ospf import OSPF_LSA_Hdr
 
 
 class OSPFStateMachine:
@@ -40,7 +40,6 @@ class OSPFStateMachine:
                     print(f"[+] {state_name} reached successfully")
                     return True
                     
-                # اگر این تلاش به هر دلیلی شکست خورد:
                 if attempt < self.max_retries:
                     print(f"[!] {state_name} failed. Hard-resetting state machine to DOWN for the next attempt...")
                     self._hard_reset_to_down()
@@ -48,7 +47,7 @@ class OSPFStateMachine:
                     time.sleep(self.retry_timeout)
                     
             print(f"[-] Failed to reach {state_name} after {self.max_retries} attempts")
-            self._hard_reset_to_down() # ریسِت نهایی در صورت شکست کل تلاش‌ها
+            self._hard_reset_to_down()
             return False
 
     def _hard_reset_to_down(self):
@@ -56,13 +55,11 @@ class OSPFStateMachine:
         self.neighbor.set_state(OSPFState.DOWN)
         self.neighbor_params = None
         
-        # پاکسازی متغیرهای شناسایی روتر مقابل
         self.neighbor.target_router_id = None
         self.neighbor.target_priority = None
         self.neighbor.target_dr = None
         self.neighbor.target_bdr = None
         
-        # پاکسازی متغیرهای فاز تبادل (ExStart/Exchange)
         self.neighbor.dd_sequence = None
         self.neighbor.target_dd_sequence = None
         self.neighbor.master = None
@@ -79,7 +76,7 @@ class OSPFStateMachine:
         """
         if not self.neighbor_params:
             return {}
-        
+        print(60*'***')
         return {
             'router_id': self.neighbor.target_router_id,
             'area_id': self.neighbor.area_id,
@@ -91,12 +88,15 @@ class OSPFStateMachine:
             'backup_designated_router': self.neighbor.target_bdr,
             'auth_type': getattr(self.neighbor, 'auth_type', None),
             'auth_data': getattr(self.neighbor, 'auth_data', None),
-            'src_ip': self.neighbor.target_ip,
-            'dst_ip': getattr(self.neighbor, 'dst_ip', None),
 
             # FIX: Include the negotiated state parameters for BoFuzz to pick up
             'dbd_flags': getattr(self.neighbor, 'next_dbd_flags', 0x02),
-            'dd_seq_number': getattr(self.neighbor, 'next_dd_seq', 0x00000001)
+            'dd_seq_number': getattr(self.neighbor, 'next_dd_seq', 0x00000001),
+
+            # NEW: Extracted Target LSA values for stable LSR generation
+            'req_ls_type': getattr(self.neighbor, 'target_req_ls_type', 1),
+            'req_link_state_id': getattr(self.neighbor, 'target_req_link_state_id', '0.0.0.0'),
+            'req_advertising_router': getattr(self.neighbor, 'target_req_advertising_router', '0.0.0.0')
         }
 
     def reach_state_init(self) -> bool:
@@ -303,6 +303,7 @@ class OSPFStateMachine:
             self._send_packet(dbd_pkt)
             print("[+] Sent initial DBD (I-M-MS)")
             # Store received LSA headers
+            self.neighbor.set_state(OSPFState.EXSTART)
             self.neighbor.received_lsa_headers = dbd_data['lsa_headers']
             print(f"[+] Received {len(dbd_data['lsa_headers'])} LSA headers in initial DBD")
             
@@ -320,6 +321,19 @@ class OSPFStateMachine:
             if self.neighbor.state != OSPFState.EXSTART:
                 if not self.reach_state_exstart():
                     return False
+                
+            target_has_more = True
+            #finish exstart
+            if self.neighbor.master:
+                response = self.handler.wait_for_packet(
+                    packet_type=2,
+                    timeout=self.retry_timeout
+                )
+                dbd_data = parse_dbd(response)
+                if(dbd_data['seq'] !=  self.neighbor.dd_sequence):
+                    print("[-] wrong seq number from slave")
+                    return False
+            
             
             if not self.neighbor_params:
                 print("[-] Neighbor parameters not extracted")
@@ -327,9 +341,20 @@ class OSPFStateMachine:
             
             self.neighbor.set_state(OSPFState.EXCHANGE)
             print("[*] Entering EXCHANGE state")
+
+            valid_lsa_header = OSPF_LSA_Hdr(
+                    age=1,                          
+                    options=0x02,                   
+                    type=1,                         
+                    id=ATTACKER_ROUTER_ID, 
+                    adrouter=ATTACKER_ROUTER_ID,  # <--- CHANGED FROM ad_router TO adrouter
+                    seq=0x80000001,                 
+                    chksum=0x0000,                  
+                    len=36                          
+                )
             
-            target_has_more = True
-            
+
+            send_valid_lsa=True
             while target_has_more:
                 # Prepare sequence number
                 if self.neighbor.master:
@@ -341,18 +366,21 @@ class OSPFStateMachine:
                 print(f"[*] Sending DBD with sequence {current_seq} (master={self.neighbor.master})")
                 
                 # Send DBD without I bit, no more LSAs from us
-                flags = 0x02 if self.neighbor.master else 0x00  # MS bit only if master
+                
+                flags = 0x01 if self.neighbor.master else 0x00  # MS bit only if master
                 dbd_pkt = build_dbd_packet(
                     neighbor_params=self.neighbor_params,
                     dd_sequence=current_seq,
                     flags=flags,
-                    lsa_headers=[]
+                    lsa_headers=[valid_lsa_header] if send_valid_lsa else []
                 )
+
+
                 dbd_pkt = wrap_in_ip(
                     dbd_pkt
                 )
                 self._send_packet(dbd_pkt)
-                
+                send_valid_lsa=False
                 # Wait for DBD response
                 response = self.handler.wait_for_packet(
                     packet_type=2,
@@ -382,6 +410,22 @@ class OSPFStateMachine:
                 self.neighbor.received_lsa_headers.extend(new_headers)
                 print(f"[+] Received {len(new_headers)} LSA headers (total: {len(self.neighbor.received_lsa_headers)})")
                 
+                # ==============================================================================
+                # EXTRACT FIRST VALID LSA FOR BOOFUZZ LSR ALIGNMENT
+                # ==============================================================================
+                if new_headers and not getattr(self.neighbor, 'target_req_ls_type', None):
+                    first_lsa = new_headers[0]
+                    # print(first_lsa['type'])
+                    self.neighbor.target_req_ls_type = first_lsa['type']
+                    self.neighbor.target_req_link_state_id = first_lsa['id']
+                    
+                    self.neighbor.target_req_advertising_router = first_lsa['adv_router']
+                    
+                    print(f"[+] Extracted LSA for LSR mapping -> Type: {self.neighbor.target_req_ls_type}, "
+                          f"ID: {self.neighbor.target_req_link_state_id}, AdvRouter: {self.neighbor.target_req_advertising_router}")
+
+                # ==============================================================================
+
                 # Check if target has more
                 target_has_more = dbd_data['more']
                 if not target_has_more:

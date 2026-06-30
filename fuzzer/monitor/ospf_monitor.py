@@ -25,36 +25,36 @@ class FRRMonitor(BaseMonitor):
     #         return False
 
 
-    def post_send(self, target=None, fuzz_data_logger=None, session=None) ->bool: # type: ignore[override]
-        """
-        Called automatically AFTER every mutation transmission.
-        This is where crash verification belongs.
-        """
-        time.sleep(0.1) # Small delay to give ospfd time to log a crash or fail
+    # def post_send(self, target=None, fuzz_data_logger=None, session=None) ->bool: # type: ignore[override]
+    #     """
+    #     Called automatically AFTER every mutation transmission.
+    #     This is where crash verification belongs.
+    #     """
+    #     time.sleep(0.1) # Small delay to give ospfd time to log a crash or fail
         
-        try:
-            response = requests.get(f"{self.agent_url}/status", timeout=2)
-            if response.status_code == 200:
-                status = response.json()
+    #     try:
+    #         response = requests.get(f"{self.agent_url}/status", timeout=2)
+    #         if response.status_code == 200:
+    #             status = response.json()
                 
-                if status.get('crashed', False):
-                    msg = (
-                        f"CRASH DETECTED via Agent Status!\n"
-                        f"     OSPF processes: {status.get('ospfd_running')}/{status.get('expected')}\n"
-                        f"     FRR active: {status.get('frr_active')}"
-                    )
-                    if fuzz_data_logger:
-                        fuzz_data_logger.log_fail(msg)
-                    else:
-                        print(f"\n[!!!] {msg}")
-                    return False # Signals Boofuzz that a crash occurred
+    #             if status.get('crashed', False):
+    #                 msg = (
+    #                     f"CRASH DETECTED via Agent Status!\n"
+    #                     f"     OSPF processes: {status.get('ospfd_running')}/{status.get('expected')}\n"
+    #                     f"     FRR active: {status.get('frr_active')}"
+    #                 )
+    #                 if fuzz_data_logger:
+    #                     fuzz_data_logger.log_fail(msg)
+    #                 else:
+    #                     print(f"\n[!!!] {msg}")
+    #                 return False # Signals Boofuzz that a crash occurred
                 
-                return True
-            return False
-        except Exception as e:
-            msg = f"Check failed post-send (Target might have hard-crashed/frozen): {e}"
-            if fuzz_data_logger:
-                fuzz_data_logger.log_error(msg)
-            else:
-                print(f"[Monitor] {msg}")
-            return False
+    #             return True
+    #         return False
+    #     except Exception as e:
+    #         msg = f"Check failed post-send (Target might have hard-crashed/frozen): {e}"
+    #         if fuzz_data_logger:
+    #             fuzz_data_logger.log_error(msg)
+    #         else:
+    #             print(f"[Monitor] {msg}")
+    #         return False

@@ -136,9 +136,7 @@ class OSPFPacketHandler:
     
     def wait_for_packet(self, packet_type: int, timeout: int = 10):
         try:
-            # متد get در Queue پایتون خودش منطق "صبر" را دارد.
-            # اگر صف پر باشد، فوراً برمی‌گرداند.
-            # اگر خالی باشد، تا زمان timeout منتظر می‌ماند.
+            #return first packet in queue or wait for it
             return self.queues[packet_type].get(block=True, timeout=timeout)
         except Empty:
             return None

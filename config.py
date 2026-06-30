@@ -8,14 +8,14 @@ ATTACKER_IP = "192.168.56.102"
 
 # --- OSPF Protocol Settings ---
 TARGET_ROUTER_IP = "192.168.56.201" 
-ATTACKER_ROUTER_ID = "3.3.3.3"
+ATTACKER_ROUTER_ID = "1.1.1.1"
 
 
 # --- Boofuzz Agent / Monitor Settings ---
 TARGET_AGENT_IP  = "192.168.56.101"
 AGENT_PORT = 26000
 
-TARGET_ROUTER_ID = "1.1.1.1"
+TARGET_ROUTER_ID = "2.2.2.2"
 AREA_ID = "0.0.0.0"
 AUTH_TYPE = 0 # 0 = Null Authentication
 

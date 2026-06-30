@@ -43,13 +43,11 @@ def define_dbd_ExStart():
         s_byte(0x07, name="flags",       fuzzable=True)
         s_dword(0x1,   name="seq_number",  fuzzable=True, endian='>')
 
-
 # ==============================================================================
 # CONFIGURATION: Choose your phase
 # "DBD_FRAMEWORK" -> Fuzzes MTU/Options, keeps LSA static (Phase 1)
 # "LSA_PARSING"   -> Keeps DBD stable, fuzzes the deep LSA headers (Phase 2)
 # ==============================================================================
-
 
 def define_dbd_ExChange():
     s_initialize("dbd_Exchange")
@@ -103,6 +101,7 @@ def define_dbd_ExChange():
         # change fuzzable to False to ensure mutations reach fields above.
         s_word(20, name="lsa_length", fuzzable=False, endian='>')
 
+
 # def define_lsr_packet():
 #     s_initialize("ospf_lsr")
 #     define_ospf_header("lsr")           # type=0x03, len=36 set می‌شود
@@ -110,3 +109,21 @@ def define_dbd_ExChange():
 #         s_dword(0x01, name="ls_type",    fuzzable=True, endian='>')
 #         s_dword(0x00000000, name="ls_id",    fuzzable=True, endian='>')
 #         s_dword(0x01010101, name="adv_router", fuzzable=True, endian='>')
+
+def define_lsr():
+    # After s_initialize, print the request to verify both blocks render
+    s_initialize("ospf_lsr")
+    define_ospf_header("lsr")
+
+    with s_block("lsr_all_requests"):
+        
+        # (Request 1)
+        s_dword(1, name="type_1", fuzzable=False, endian='>')
+        s_dword(0x0a000002, name="id_1", fuzzable=False, endian='>')
+        s_dword(0x0a000002, name="adv_1", fuzzable=False, endian='>')
+
+        #  (Request 2 - Fuzzable)
+        s_dword(1, name="type_2", fuzzable=True, endian='>')
+        s_dword(0x0a000003, name="id_2", fuzzable=True, endian='>')
+        s_dword(0x0a000003, name="adv_2", fuzzable=True, endian='>')
+# Verify rendered size before sending

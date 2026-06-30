@@ -171,3 +171,62 @@ def setup_state_4_Exchange(target, fuzz_data_logger, session, *args, **kwargs):
             
         return original_send(bytes(data))
     target.send = patched_send
+
+
+def setup_state_5_Loading_lsr(target, fuzz_data_logger, session, *args, **kwargs):
+    fuzz_data_logger.log_info("Preamble: Advancing to State Exstart.")
+    simulator = OSPFSimulator(func="reach_state_exchange")
+    params = simulator.run()
+
+    original_send = target.send
+
+    def patched_send(data):
+        data = bytearray(data) 
+        
+        # Verify it's an OSPFv2 packet and has at least the minimum header size
+        if len(data) >= 24 and data[0] == 2:
+            
+            # --- 1. Patch Header Fields via external function ---
+            router_id, area_id = fix_header(data, params)
+
+            # --- 2. Inject Valid LSR Block 1 (If Packet Type is 3 / LSR) ---
+            # An LSR packet must be at least 36 bytes (24-byte header + 12-byte block)
+            if data[1] == 3 and len(data) >= 36:
+                try:
+                    # Extract values from the simulator params dictionary
+                    ls_type = int(params.get('req_ls_type', 1))
+                    ls_id_str = params.get('req_link_state_id', '0.0.0.0')
+                    adv_router_str = params.get('req_advertising_router', '0.0.0.1')
+                    
+                    # Pack values into network-byte-order (Big Endian) bytes
+                    ls_type_bytes = struct.pack('>I', ls_type)
+                    ls_id_bytes = socket.inet_aton(ls_id_str)
+                    adv_router_bytes = socket.inet_aton(adv_router_str)
+                    
+                    # Overwrite the first 12 payload bytes directly following the 24-byte header
+                    data[24:28] = ls_type_bytes      # LS Type (4 bytes)
+                    data[28:32] = ls_id_bytes        # Link State ID (4 bytes)
+                    data[32:36] = adv_router_bytes   # Advertising Router (4 bytes)
+                    
+                    fuzz_data_logger.log_info(
+                        f"Injected Valid LSR Block 1 -> Type: {ls_type}, ID: {ls_id_str}, AdvRouter: {adv_router_str}"
+                    )
+                except Exception as e:
+                    fuzz_data_logger.log_error(f"Failed to inject valid LSR fields: {str(e)}")
+
+            # --- 4. Dynamically Update Global OSPF Packet Length (Offset 2, 2 bytes) ---
+            struct.pack_into("!H", data, 2, len(data))
+
+            # --- 5. Clear and Recalculate Global OSPF Checksum (Offset 12, 2 bytes) ---
+            data[12] = 0
+            data[13] = 0
+            checksum = ospf_checksum(bytes(data))
+            data[12:14] = checksum
+            
+            fuzz_data_logger.log_info(
+                f"Patched OSPF Header -> RID: {router_id}, Area: {area_id}, Checksum: {checksum.hex()}"
+            )
+            
+        return original_send(bytes(data))
+    
+    target.send = patched_send

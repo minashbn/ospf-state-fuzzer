@@ -17,11 +17,13 @@ import struct
 from .monitor.ospf_monitor import *
 
 
+# State ID: (Packet Definition Func, "boofuzz_string_identifier", Callback Func, Reset Timeout)
 STATE_HANDLERS = {
     1: (define_hello_init, "hello_init", None,0),
     2: (define_hello_2way, "hello_2way", setup_state_2_hello_2way,10.1),
     3: (define_dbd_ExStart, "ospf_ExStart",setup_state_3_ExStart,10.1),
     4: (define_dbd_ExChange, "dbd_Exchange", setup_state_4_Exchange,10.1),
+    5: (define_lsr, "ospf_lsr", setup_state_5_Loading_lsr,10.1),
 }
 
 
@@ -61,6 +63,9 @@ def fuzzing(state):
 
     #Difine packet
     define_grammar_func()
+    req = s_get("ospf_lsr")
+    print(req)  # Should be 24 (header) + 24 (two LSR entries) = 48+ bytes
+
     if preamble_callback is not None:
             session.connect(s_get(node_name), callback=preamble_callback)
     else:
