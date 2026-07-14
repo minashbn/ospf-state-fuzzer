@@ -8,7 +8,9 @@ import time
 from scapy.all import *
 from scapy.contrib.ospf import *
 from config import *
-
+from typing import Optional
+from scapy.packet import NoPayload
+from scapy.contrib.ospf import OSPF_DBDesc, OSPF_Hdr, OSPF_LSA_Hdr
 
 class OSPFPacketHandler:
     """
@@ -166,23 +168,26 @@ def parse_hello(pkt) -> dict:
     }
 
 
+
+
 def parse_dbd(pkt) -> dict:
     """
-    Extract relevant fields from DBD packet
+    Extract relevant fields from an OSPF DBD packet.
+    Raises ValueError if the packet is not a valid OSPF DBD packet.
     """
-    if not pkt.haslayer(OSPF_DBDesc):
-        return None # type: ignore
-    
+    if not pkt.haslayer(OSPF_DBDesc) or not pkt.haslayer(OSPF_Hdr):
+        raise ValueError("Provided packet is missing OSPF_DBDesc or OSPF_Hdr layers")
+
     dbd = pkt[OSPF_DBDesc]
     ospf_hdr = pkt[OSPF_Hdr]
-    
-    # Parse flags
+
+    # Parse DBD flags (I/M/MS bits)
     flags = dbd.dbdescr
     init = bool(flags & 0x04)
     more = bool(flags & 0x02)
     master = bool(flags & 0x01)
-    
-    # Extract LSA headers
+
+    # Walk the payload chain and collect LSA headers
     lsa_headers = []
     for lsa in dbd.lsaheaders:
         lsa_headers.append({
@@ -205,7 +210,7 @@ def parse_dbd(pkt) -> dict:
         'init': init,
         'more': more,
         'master': master,
-        'lsa_headers': lsa_headers
+        'lsa_headers': lsa_headers,
     }
 
 

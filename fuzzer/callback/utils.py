@@ -2,6 +2,7 @@ import struct
 import requests
 import struct
 import socket
+from config import ATTACKER_ROUTER_ID
 
 def ospf_checksum(data):
     data = list(data)
@@ -23,7 +24,7 @@ def fix_header(data, params):
     """
     Modifies the OSPF header bytearray in place using the provided params dictionary.
     """
-    router_id = params.get('router_id')
+    router_id = ATTACKER_ROUTER_ID
     if router_id:
         # FIXED: Pass the variable router_id, not the string literal 'router_id'
         data[4:8] = socket.inet_aton(router_id)
@@ -88,13 +89,15 @@ def fletcher16_ospf_lsa(data: bytearray):
     return bytes([x, y])
 
 def reset_target_state(target, fuzz_data_logger, session, *args, **kwargs):
+    pass
+    raise BaseException("stop it")
 
-    AGENT_URL = "http://192.168.56.101:26000/reset_ospf" 
-    try:
-        response = requests.get(AGENT_URL, timeout=2)
-        if response.status_code == 200:
-            fuzz_data_logger.log_info("OSPF State cleared successfully via Agent.")
-        else:
-            fuzz_data_logger.log_fail(f"Agent failed to clear OSPF: {response.text}")
-    except requests.exceptions.RequestException as e:
-        fuzz_data_logger.log_error(f"Failed to connect to Agent: {str(e)}")
+    # AGENT_URL = "http://192.168.56.101:26000/reset_ospf" 
+    # try:
+    #     response = requests.get(AGENT_URL, timeout=2)
+    #     if response.status_code == 200:
+    #         fuzz_data_logger.log_info("OSPF State cleared successfully via Agent.")
+    #     else:
+    #         fuzz_data_logger.log_fail(f"Agent failed to clear OSPF: {response.text}")
+    # except requests.exceptions.RequestException as e:
+    #     fuzz_data_logger.log_error(f"Failed to connect to Agent: {str(e)}")
