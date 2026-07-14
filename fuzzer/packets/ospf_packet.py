@@ -67,7 +67,7 @@ def define_dbd_ExChange():
         s_byte(0x02, name="options",       fuzzable=fuzz_dbd)
         
         # Critical state flags - ALWAYS static to maintain the Exchange state
-        s_byte(0x02, name="dbd_flags",     fuzzable=False) 
+        s_byte(0x02, name="dbd_flags",     fuzzable=fuzz_dbd) 
         s_dword(0x00000001, name="dd_seq_number", fuzzable=False, endian='>')
 
     # --------------------------------------------------------------------------
@@ -101,14 +101,6 @@ def define_dbd_ExChange():
         # change fuzzable to False to ensure mutations reach fields above.
         s_word(20, name="lsa_length", fuzzable=False, endian='>')
 
-
-# def define_lsr_packet():
-#     s_initialize("ospf_lsr")
-#     define_ospf_header("lsr")           # type=0x03, len=36 set می‌شود
-#     with s_block("lsr_body"):
-#         s_dword(0x01, name="ls_type",    fuzzable=True, endian='>')
-#         s_dword(0x00000000, name="ls_id",    fuzzable=True, endian='>')
-#         s_dword(0x01010101, name="adv_router", fuzzable=True, endian='>')
 
 def define_lsr():
     # After s_initialize, print the request to verify both blocks render

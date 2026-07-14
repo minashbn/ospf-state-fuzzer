@@ -120,10 +120,12 @@ def setup_state_4_Exchange(target, fuzz_data_logger, session, *args, **kwargs):
             # --- 2. Patch Live DBD State Machine Parameters ---
             dbd_flags = params.get('dbd_flags', 0x02)
             dd_seq = params.get('dd_seq_number', 0x00000001)
+            dd_mtu = params.get('mtu', 1500)
+            struct.pack_into("!I", data, 28, dd_seq)     # Packs 4 bytes at offset 28-31
 
             if len(data) >= 32 and FUZZING_PHASE == "LSA_PARSING":
-                struct.pack_into("!B", data, 27, dbd_flags)
-                struct.pack_into("!I", data, 28, dd_seq)
+                struct.pack_into("!H", data, 24, dd_mtu)    # Packs 2 bytes at offset 24 & 25
+                struct.pack_into("!B", data, 27, dbd_flags)  # Packs 1 byte at offset 27
             
             # --- 3. Calculate and Patch LSA Header Parameters ---
             if len(data) >= 52:  # 32 (offset) + 20 (minimum LSA header size)
@@ -177,6 +179,7 @@ def setup_state_5_Loading_lsr(target, fuzz_data_logger, session, *args, **kwargs
     fuzz_data_logger.log_info("Preamble: Advancing to State Exstart.")
     simulator = OSPFSimulator(func="reach_state_exchange")
     params = simulator.run()
+
 
     original_send = target.send
 

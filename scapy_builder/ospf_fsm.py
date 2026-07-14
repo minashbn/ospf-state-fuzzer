@@ -76,6 +76,9 @@ class OSPFStateMachine:
         """
         if not self.neighbor_params:
             return {}
+        
+        self.update_target_lsa_params()
+        
         print(60*'***')
         return {
             'router_id': self.neighbor.target_router_id,
@@ -92,12 +95,38 @@ class OSPFStateMachine:
             # FIX: Include the negotiated state parameters for BoFuzz to pick up
             'dbd_flags': getattr(self.neighbor, 'next_dbd_flags', 0x02),
             'dd_seq_number': getattr(self.neighbor, 'next_dd_seq', 0x00000001),
+            'mtu': getattr(self.neighbor, 'mtu', 1500),
 
             # NEW: Extracted Target LSA values for stable LSR generation
             'req_ls_type': getattr(self.neighbor, 'target_req_ls_type', 1),
             'req_link_state_id': getattr(self.neighbor, 'target_req_link_state_id', '0.0.0.0'),
             'req_advertising_router': getattr(self.neighbor, 'target_req_advertising_router', '0.0.0.0')
         }
+
+    def update_target_lsa_params(self):
+        """
+        Extracts the first LSA header from received DBDs and updates neighbor target properties.
+        """
+        # بررسی وجود لیست هدرها و خالی نبودن آن
+        headers = getattr(self.neighbor, 'received_lsa_headers', [])
+        
+        if headers and len(headers) > 0:
+            target_lsa = headers[0] # برداشتن اولین LSA برای تولید پایدار LSR
+            
+            self.neighbor.target_req_ls_type = target_lsa.get('type', 1)
+            self.neighbor.target_req_link_state_id = target_lsa.get('id', '0.0.0.0')
+            self.neighbor.target_req_advertising_router = target_lsa.get('adv_router', '0.0.0.0')
+            
+            # برای دیباگ راحت‌تر در کنسول Boofuzz
+            print(f"[+] LSA Params Updated for LSR -> Type: {self.neighbor.target_req_ls_type}, "
+                f"ID: {self.neighbor.target_req_link_state_id}, "
+                f"Adv Router: {self.neighbor.target_req_advertising_router}")
+        else:
+            # مقادیر پیش‌فرض امن در صورتی که هنوز LSA دریافت نشده باشد
+            self.neighbor.target_req_ls_type = getattr(self.neighbor, 'target_req_ls_type', 1)
+            self.neighbor.target_req_link_state_id = getattr(self.neighbor, 'target_req_link_state_id', '0.0.0.0')
+            self.neighbor.target_req_advertising_router = getattr(self.neighbor, 'target_req_advertising_router', '0.0.0.0')
+
 
     def reach_state_init(self) -> bool:
         """
@@ -266,8 +295,9 @@ class OSPFStateMachine:
             dbd_pkt = wrap_in_ip(
                 dbd_pkt
             )
+            self._send_packet(dbd_pkt)
             
-            # Wait for DBD response
+            # Wait for DBD proposal from target router
             response = self.handler.wait_for_packet(
                 packet_type=2,
                 timeout=self.retry_timeout
@@ -282,6 +312,7 @@ class OSPFStateMachine:
             if not dbd_data:
                 print("[-] Failed to parse DBD response")
                 return False
+            self.neighbor.mtu=dbd_data['mtu']
             
             # Determine master/slave by comparing Router IDs
             our_rid = ipaddress.IPv4Address(self.neighbor.our_router_id)
@@ -289,156 +320,159 @@ class OSPFStateMachine:
 
             if our_rid > target_rid:
                 self.neighbor.master = True
-                self.neighbor.target_dd_sequence = dbd_data['seq']
                 print(f"[+] We are MASTER (our RID {our_rid} > target RID {target_rid})")
-                self.neighbor.next_dbd_flags = 0x01
-                self.neighbor.next_dd_seq = self.neighbor.dd_sequence
+                
+                # As Master, wait for the Slave to ACK our 0x07 packet by sending a new packet
+                print("[*] Master mode: Waiting for Slave's ACK packet...")
+                slave_ack = self.handler.wait_for_packet(packet_type=2, timeout=self.retry_timeout)
+                if not slave_ack:
+                    print("[-] Slave failed to acknowledge Master's sequence")
+                    return False
+                
+                slave_dbd = parse_dbd(slave_ack)
+                # Check if the Slave has acknowledged its role (MS=0, I=0) and matched our sequence number
+                if not slave_dbd or slave_dbd['master']==1 or slave_dbd['init']==1 or slave_dbd['seq'] != our_seq:
+                    print("[-] Invalid DBD ACK received from Slave")
+                    return False
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
+                self.neighbor.target_dd_sequence = slave_dbd['seq']
+                self.neighbor.received_lsa_headers = slave_dbd['lsa_headers']    
+                print(slave_dbd['lsa_headers'])  
+                print(f"[+] Slave ACK received. Received {len(slave_dbd['lsa_headers'])} LSA headers.")
+
             else:
                 self.neighbor.master = False
-                self.neighbor.dd_sequence = dbd_data['seq']
-                self.neighbor.target_dd_sequence = dbd_data['seq']
                 print(f"[+] We are SLAVE (our RID {our_rid} < target RID {target_rid})")
-                self.neighbor.next_dbd_flags = 0x00 
-                self.neighbor.next_dd_seq = dbd_data['seq']
-            self._send_packet(dbd_pkt)
-            print("[+] Sent initial DBD (I-M-MS)")
-            # Store received LSA headers
-            self.neighbor.set_state(OSPFState.EXSTART)
-            self.neighbor.received_lsa_headers = dbd_data['lsa_headers']
-            print(f"[+] Received {len(dbd_data['lsa_headers'])} LSA headers in initial DBD")
-            
+                
+                # As Slave, set our sequence number to match the Master's sequence number
+                master_seq = dbd_data['seq']
+                self.neighbor.dd_sequence = master_seq
+                self.neighbor.target_dd_sequence = master_seq
+                
+                # Immediately send the ACK packet to notify the Master of our role acceptance
+                print("[*] Slave mode: Sending ACK packet to Master...")
+                ack_pkt = build_dbd_packet(
+                    neighbor_params=self.neighbor_params,
+                    dd_sequence=master_seq,
+                    flags=0x02,  # I=0, M=1, MS=0 (Slave role confirmation)
+                )
+                ack_pkt = wrap_in_ip(ack_pkt)
+                self._send_packet(ack_pkt) # Call your packet sending method here
+
+            # Once both sides accept their roles, transition the neighbor state to EXSTART
+            self.neighbor.set_state(OSPFState.EXSTART) 
+            print("[+] EXSTART Negotiation completed successfully.")
             return True
-        
+                
         return self._retry_wrapper(attempt_exstart, "EXSTART state")
+
 
     def reach_state_exchange(self) -> bool:
         """
         Transition: EXSTART -> EXCHANGE
-        Exchange complete database description via DBD packets
+        Properly handles Master/Slave DBD exchange logic.
         """
         def attempt_exchange():
-            # Ensure we're at least in EXSTART
             if self.neighbor.state != OSPFState.EXSTART:
                 if not self.reach_state_exstart():
                     return False
-                
-            target_has_more = True
-            #finish exstart
-            if self.neighbor.master:
-                response = self.handler.wait_for_packet(
-                    packet_type=2,
-                    timeout=self.retry_timeout
-                )
-                dbd_data = parse_dbd(response)
-                if(dbd_data['seq'] !=  self.neighbor.dd_sequence):
-                    print("[-] wrong seq number from slave")
-                    return False
             
-            
+            self.neighbor.set_state(OSPFState.EXCHANGE)
+            print(f"[*] Entering EXCHANGE state as {'MASTER' if self.neighbor.master else 'SLAVE'}")
+
+            # Define the LSA we want to advertise (only once)
+            my_lsa = OSPF_LSA_Hdr(
+                age=1, options=0x02, type=1,
+                id=ATTACKER_ROUTER_ID, adrouter=ATTACKER_ROUTER_ID,
+                seq=0x80000001, chksum=0x0000, len=36
+            )
+
             if not self.neighbor_params:
                 print("[-] Neighbor parameters not extracted")
                 return False
             
-            self.neighbor.set_state(OSPFState.EXCHANGE)
-            print("[*] Entering EXCHANGE state")
+            target_has_more = True
+            first_packet_sent = False
 
-            valid_lsa_header = OSPF_LSA_Hdr(
-                    age=1,                          
-                    options=0x02,                   
-                    type=1,                         
-                    id=ATTACKER_ROUTER_ID, 
-                    adrouter=ATTACKER_ROUTER_ID,  # <--- CHANGED FROM ad_router TO adrouter
-                    seq=0x80000001,                 
-                    chksum=0x0000,                  
-                    len=36                          
-                )
-            
-
-            send_valid_lsa=True
             while target_has_more:
-                # Prepare sequence number
                 if self.neighbor.master:
+                    # --- MASTER LOGIC ---
+                    # Increment sequence for each new exchange (except the very first one in ExStart)    
                     self.neighbor.dd_sequence += 1
-                    current_seq = self.neighbor.dd_sequence
-                else:
-                    current_seq = self.neighbor.target_dd_sequence
-                
-                print(f"[*] Sending DBD with sequence {current_seq} (master={self.neighbor.master})")
-                
-                # Send DBD without I bit, no more LSAs from us
-                
-                flags = 0x01 if self.neighbor.master else 0x00  # MS bit only if master
-                dbd_pkt = build_dbd_packet(
-                    neighbor_params=self.neighbor_params,
-                    dd_sequence=current_seq,
-                    flags=flags,
-                    lsa_headers=[valid_lsa_header] if send_valid_lsa else []
-                )
+                    
+                    # Send DBD
+                    flags = 0x01  # MS=1, M=we_have_more
+                    dbd_pkt = build_dbd_packet(
+                        neighbor_params=self.neighbor_params,
+                        dd_sequence=self.neighbor.dd_sequence,
+                        flags=flags,
+                        lsa_headers=[my_lsa] if not first_packet_sent else []
+                    )
+                    self._send_packet(wrap_in_ip(dbd_pkt))
+                    first_packet_sent = True
 
-
-                dbd_pkt = wrap_in_ip(
-                    dbd_pkt
-                )
-                self._send_packet(dbd_pkt)
-                send_valid_lsa=False
-                # Wait for DBD response
-                response = self.handler.wait_for_packet(
-                    packet_type=2,
-                    timeout=self.retry_timeout
-                )
-                
-                if not response:
-                    print("[-] No DBD response received")
-                    return False
-                
-                # Parse DBD
-                dbd_data = parse_dbd(response)
-                if not dbd_data:
-                    print("[-] Failed to parse DBD response")
-                    return False
-                
-                # Validate sequence number
-                if self.neighbor.master:
-                    if dbd_data['seq'] != current_seq:
-                        print(f"[-] Sequence mismatch: expected {current_seq}, got {dbd_data['seq']}")
+                    # Wait for Slave's Echo (ACK)
+                    response = self.handler.wait_for_packet(packet_type=2, timeout=self.retry_timeout)
+                    if not response:
+                        print("[-] Master: No DBD response from Slave")
                         return False
+                    
+                    dbd_data = parse_dbd(response)
+                    # Master check: Slave must echo the SAME sequence number
+                    if dbd_data['seq'] != self.neighbor.dd_sequence:
+                        print(f"[-] Master: Sequence mismatch! Sent {self.neighbor.dd_sequence}, Got {dbd_data['seq']}")
+                        return False
+                    if dbd_data['lsa_headers']:
+                        self.neighbor.received_lsa_headers.extend(dbd_data['lsa_headers'])
+                        
+                    
+                    target_has_more = dbd_data['more']
+
                 else:
-                    self.neighbor.target_dd_sequence = dbd_data['seq']
-                
-                # Collect LSA headers
-                new_headers = dbd_data['lsa_headers']
-                self.neighbor.received_lsa_headers.extend(new_headers)
-                print(f"[+] Received {len(new_headers)} LSA headers (total: {len(self.neighbor.received_lsa_headers)})")
-                
-                # ==============================================================================
-                # EXTRACT FIRST VALID LSA FOR BOOFUZZ LSR ALIGNMENT
-                # ==============================================================================
-                if new_headers and not getattr(self.neighbor, 'target_req_ls_type', None):
-                    first_lsa = new_headers[0]
-                    # print(first_lsa['type'])
-                    self.neighbor.target_req_ls_type = first_lsa['type']
-                    self.neighbor.target_req_link_state_id = first_lsa['id']
+                    # --- SLAVE LOGIC ---
+                    # 1. Wait for Master's DBD
+                    response = self.handler.wait_for_packet(packet_type=2, timeout=self.retry_timeout)
+                    if not response:
+                        print("[-] Slave: No DBD received from Master")
+                        return False
                     
-                    self.neighbor.target_req_advertising_router = first_lsa['adv_router']
-                    
-                    print(f"[+] Extracted LSA for LSR mapping -> Type: {self.neighbor.target_req_ls_type}, "
-                          f"ID: {self.neighbor.target_req_link_state_id}, AdvRouter: {self.neighbor.target_req_advertising_router}")
+                    dbd_data = parse_dbd(response)
+                    # Slave MUST use the sequence number from Master
+                    self.neighbor.dd_sequence = dbd_data['seq']
+                    target_has_more = dbd_data['more']
 
-                # ==============================================================================
+                    # 2. Process received LSA headers
+                    if dbd_data['lsa_headers']:
+                        self.neighbor.received_lsa_headers.extend(dbd_data['lsa_headers'])
 
-                # Check if target has more
-                target_has_more = dbd_data['more']
+                    # 3. Send DBD as ACK (Echo the sequence)
+                    flags = 0 # MS=0, M=we_have_more
+                    dbd_pkt = build_dbd_packet(
+                        neighbor_params=self.neighbor_params,
+                        dd_sequence=self.neighbor.dd_sequence,
+                        flags=flags,
+                        lsa_headers=[my_lsa] if not first_packet_sent else []
+                    )
+                    self._send_packet(wrap_in_ip(dbd_pkt))
+                    first_packet_sent = True
+
+                # Break if both sides have no more data
                 if not target_has_more:
-                    print("[+] Target has no more DBDs")
-            
-            # If no LSAs, go directly to FULL
-            if len(self.neighbor.received_lsa_headers) == 0:
-                print("[*] No LSAs to request, transitioning to FULL")
+                    print("[+] Exchange complete: Both sides have M=0")
+                    break
+
+            # Transition to Loading or Full
+            if len(self.neighbor.received_lsa_headers) > 0:
+                self.neighbor.set_state(OSPFState.LOADING)
+                print(f"[*] Transition to LOADING. {len(self.neighbor.received_lsa_headers)} LSAs to request.")
+            else:
                 self.neighbor.set_state(OSPFState.FULL)
-            
+                print("[*] Transition to FULL (Database synchronized)")
             return True
-        
+
         return self._retry_wrapper(attempt_exchange, "EXCHANGE state")
+
+
 
     def reach_state_loading(self) -> bool:
         """
@@ -511,6 +545,7 @@ class OSPFStateMachine:
             return True
         
         return self._retry_wrapper(attempt_loading, "LOADING state")
+
 
     def reach_state_full(self) -> bool:
         """

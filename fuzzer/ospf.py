@@ -54,7 +54,7 @@ def fuzzing(state):
     # 4. Setup Session
     session = Session(
         target=target,
-        sleep_time=2,
+        sleep_time=5,
         fuzz_loggers=[FuzzLoggerText()],
         # pre_send_callbacks=[update_ospf_packet],
         post_test_case_callbacks=[reset_target_state],
@@ -63,8 +63,6 @@ def fuzzing(state):
 
     #Difine packet
     define_grammar_func()
-    req = s_get("ospf_lsr")
-    print(req)  # Should be 24 (header) + 24 (two LSR entries) = 48+ bytes
 
     if preamble_callback is not None:
             session.connect(s_get(node_name), callback=preamble_callback)
