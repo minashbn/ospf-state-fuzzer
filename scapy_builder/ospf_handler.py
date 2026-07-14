@@ -184,22 +184,19 @@ def parse_dbd(pkt) -> dict:
     
     # Extract LSA headers
     lsa_headers = []
-    layer = pkt
-    while layer:
-        if layer.haslayer(OSPF_LSA_Hdr):
-            lsa_hdr = layer[OSPF_LSA_Hdr]
-            lsa_headers.append({
-                'type': lsa_hdr.type,
-                'id': lsa_hdr.id,
-                'adv_router': lsa_hdr.adrouter,
-                'seq': lsa_hdr.seq,
-                'age': lsa_hdr.age,
-                'chksum': lsa_hdr.chksum
-            })
-            layer = layer.payload
-        else:
-            break
-    
+    for lsa in dbd.lsaheaders:
+        lsa_headers.append({
+            'type': lsa.type,
+            'id': lsa.id,
+            'adv_router': lsa.adrouter,
+            'seq': lsa.seq,
+            'age': lsa.age,
+            'chksum': lsa.chksum,
+        })
+    # print("attention"*60)
+    # print(lsa_headers)
+
+    # raise BaseException("check error ro")
     return {
         'router_id': ospf_hdr.src,
         'seq': dbd.ddseq,
