@@ -472,6 +472,77 @@ class OSPFStateMachine:
 
         return self._retry_wrapper(attempt_exchange, "EXCHANGE state")
 
+    def reach_state_lsu(self) -> bool:
+            """
+            Transition: EXCHANGE -> LOADING -> FULL
+            Uses build_lsr_packet to request missing LSAs, processes target response,
+            and transitions state to FULL. Correctly handles dict-based LSA headers.
+            """
+            def attempt_loading():
+                # Check if we are in a valid state to transition
+                if self.neighbor.state != OSPFState.EXCHANGE:
+                    if not self.reach_state_exchange():
+                        return False
+                
+                # If exchange yielded no LSA headers, skip directly to FULL
+                if not self.neighbor.received_lsa_headers:
+                    print("[*] No LSA headers received during Exchange. Skipping LOADING, moving to FULL.")
+                    self.neighbor.set_state(OSPFState.FULL)
+                    return True
+
+                self.neighbor.set_state(OSPFState.LOADING)
+                print(f"[*] Entering LOADING state. Requesting {len(self.neighbor.received_lsa_headers)} LSAs.")
+
+                if not self.neighbor_params:
+                    print("[-] Neighbor parameters not extracted")
+                    return False
+
+                # 1. Grab the first LSA header dictionary
+                first_lsa_hdr = self.neighbor.received_lsa_headers[0]
+                
+                # --- FIX: Safe dictionary key lookup with fallbacks ---
+                lsa_type = first_lsa_hdr.get('type')
+                lsa_id = first_lsa_hdr.get('id')
+                lsa_adrouter = first_lsa_hdr.get('adv_router')
+                
+                print(f"[*] Target LSA to request: Type {lsa_type}, ID {lsa_id}, AdRouter {lsa_adrouter}")
+
+                # 2. Format request list as tuples: [(ls_type, ls_id, advertising_router)]
+                requests_to_send = [(lsa_type, lsa_id, lsa_adrouter)]
+
+                # 3. Build and send the LSR packet using build_lsr_packet
+                lsr_pkt = build_lsr_packet(self.neighbor_params, requests_to_send)
+                print("[*] Sending LSR to target...")
+                self._send_packet(wrap_in_ip(lsr_pkt))
+
+                # 4. Wait to receive the target's LSR packet (OSPF Type 3)
+                print("[*] Waiting to receive LSR from target...")
+                target_packet = self.handler.wait_for_packet(packet_type=3, timeout=self.retry_timeout)
+                
+                if not target_packet:
+                    print("[-] Loading: Timed out waiting for LSR from target")
+                    return False
+
+                # 5. Extract fields from target's LSR container
+                if target_packet.haslayer(OSPF_LSReq):
+                    lsr_layer = target_packet[OSPF_LSReq]
+                    print(f"[+] Received target LSR containing {len(lsr_layer.requests)} request(s):")
+                    
+                    for idx, req in enumerate(lsr_layer.requests):
+                        print(f"    [Block {idx + 1}]")
+                        print(f"      - LS Type: {req.type}")
+                        print(f"      - Link State ID: {req.id}")
+                        print(f"      - Advertising Router: {req.adrouter}")
+                else:
+                    print("[-] Received type 3 packet, but OSPF_LSReq layer is missing or corrupt.")
+                    return False
+
+                # Complete transition to FULL
+                self.neighbor.set_state(OSPFState.FULL)
+                print("[+] Transition to FULL (Database fully synchronized)")
+                return True
+
+            return self._retry_wrapper(attempt_loading, "LOADING state")
 
 
     def reach_state_loading(self) -> bool:

@@ -8,7 +8,7 @@ from scapy.all import  Packet, Raw
 from scapy.layers.inet import IP
 from scapy.layers.l2 import Ether
 
-from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_DBDesc, OSPF_LSReq, OSPF_LSUpd, OSPF_LSA_Hdr
+from scapy.contrib.ospf import OSPF_Hdr, OSPF_Hello, OSPF_DBDesc, OSPF_LSReq, OSPF_LSReq_Item, OSPF_LSUpd, OSPF_LSA_Hdr
 import struct
 import time
 from config import *
@@ -177,26 +177,24 @@ def build_lsr_packet(neighbor_params: dict, ls_requests: list) -> Packet:
     Returns:
         Complete OSPF LSR packet
     """
+    # 1. Build the base OSPF Header (Type 3 = LSReq)
     ospf_hdr = build_ospf_header(3, neighbor_params)
     
-    # Build LSR payload manually if needed
-    # Scapy's OSPF_LSReq expects a list of OSPF_LSReq_Item objects
-    requests = []
+    # 2. Build individual OSPF_LSReq_Item layers
+    items = []
     for ls_type, ls_id, adv_router in ls_requests:
-        req = OSPF_LSReq(
+        item = OSPF_LSReq_Item(
             type=ls_type,
             id=ls_id,
             adrouter=adv_router
         )
-        requests.append(req)
+        items.append(item)
     
-    # Chain all requests
-    lsr_pkt = ospf_hdr
-    for req in requests:
-        lsr_pkt = lsr_pkt / req
+    # 3. Nest items inside the OSPF_LSReq container
+    lsr_payload = OSPF_LSReq(requests=items)
     
-    return lsr_pkt
-
+    # 4. Chain the OSPF header to the payload container
+    return ospf_hdr / lsr_payload
 
 # ============================================================================
 # Link State Update (LSU) Packet Builder
