@@ -24,7 +24,7 @@ class SimpleRawOSPF(ITargetConnection):
         self.hello_interval = hello_interval
 
         self._sock = None
-        self._expecting_response = False
+        self._expecting_response = True
 
         self.pcap_mgr = PcapManager()
         self.agent_url = agent_url # <-- Store monitor endpoint
@@ -35,13 +35,27 @@ class SimpleRawOSPF(ITargetConnection):
     def open(self):
         self.pcap_mgr.rotate_pcap() # Prepares a temporary file
         try:
+            # پیدا کردن IP لوکال متصل به این اینترفیس
+            import fcntl
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                self.our_ip = socket.inet_ntoa(fcntl.ioctl(
+                    s.fileno(),
+                    0x8915,  # SIOCGIFADDR
+                    struct.pack('256s', bytes(self.interface[:15], 'utf-8'))
+                )[20:24])
+            except Exception:
+                self.our_ip = "192.168.56.102"  # IP پیش‌فرض
+            finally:
+                s.close()
+
             self._sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(ETH_P_IP))
             self._sock.bind((self.interface, 0))
             self._sock.setblocking(False)
-            
 
-            print(f"[+] AF_PACKET socket bound to {self.interface}. Heartbeat thread started.")
+            print(f"[+] Bound to {self.interface}. Local IP: {self.our_ip}")
             return True
+
 
         except PermissionError:
             print("[!!!] Run as root (raw sockets required)")
@@ -49,6 +63,7 @@ class SimpleRawOSPF(ITargetConnection):
         except Exception as e:
             print(f"[!!!] Socket open failed: {e}")
             sys.exit(1)
+
 
     def close(self):
         """Called by Boofuzz at the END of every testcase."""
@@ -61,26 +76,26 @@ class SimpleRawOSPF(ITargetConnection):
         bug_detected = False
         crash_detected = False
         
-        try:
-            response = requests.get(f"{self.agent_url}/status", timeout=4)
-            if response.status_code == 200:
-                data = response.json()
+        # try:
+        #     response = requests.get(f"{self.agent_url}/status", timeout=4)
+        #     if response.status_code == 200:
+        #         data = response.json()
                 
-                # Check for crash
-                crash_detected = data.get("crashed", False)
+        #         # Check for crash
+        #         crash_detected = data.get("crashed", False)
                 
-                # Check if any custom-coded bugs triggered
-                bugs = data.get("bugs_detected", {})
-                bug_detected = any(bugs.values())
+        #         # Check if any custom-coded bugs triggered
+        #         bugs = data.get("bugs_detected", {})
+        #         bug_detected = any(bugs.values())
                 
-        except Exception as e:
-            print(f"[!] Warning: Could not reach monitoring agent: {e}")
-            # If the agent can't be reached, the router might have caused a total system hang.
-            # Safe bet: assume a crash happened so we save the PCAP.
-            crash_detected = True 
+        # except Exception as e:
+        #     print(f"[!] Warning: Could not reach monitoring agent: {e}")
+        #     # If the agent can't be reached, the router might have caused a total system hang.
+        #     # Safe bet: assume a crash happened so we save the PCAP.
+        #     crash_detected = True 
 
-        # 3. Tell PcapManager to finalize (keep or throw away)
-        self.pcap_mgr.finalize_testcase(bug_detected=bug_detected, crash_detected=False)
+        # # 3. Tell PcapManager to finalize (keep or throw away)
+        # self.pcap_mgr.finalize_testcase(bug_detected=bug_detected, crash_detected=False)
 
 
     def get_mac_address(self,ifname):
@@ -114,6 +129,17 @@ class SimpleRawOSPF(ITargetConnection):
         return checksum
     
     def send(self, data):
+        if self._sock:
+            # خواندن تمام پکت‌های انباشته شده تا زمانی که بافر خالی شود
+            while True:
+                try:
+                    # استفاده از پرچم MSG_DONTWAIT برای خواندن غیرمسدودکننده
+                    # و تخلیه سریع پکت‌های قدیمی
+                    self._sock.recv(65535, socket.MSG_DONTWAIT)
+                except (BlockingIOError, socket.error):
+                    # وقتی بافر کاملاً خالی شد، خطای مسدودکننده رخ می‌دهد و خارج می‌شویم
+                    break
+
         try:
             import fcntl
             # 1. Retrieve Source IP
@@ -186,7 +212,7 @@ class SimpleRawOSPF(ITargetConnection):
         if not self._sock:
             return b""
 
-        timeout = self.response_timeout if self._expecting_response else 0.2
+        timeout = self.response_timeout if self._expecting_response else 1.2
         self._expecting_response = False
 
         start = time.time()
@@ -225,6 +251,8 @@ class SimpleRawOSPF(ITargetConnection):
 
                 src_ip = socket.inet_ntoa(ip[12:16])
                 dst_ip = socket.inet_ntoa(ip[16:20])
+                if src_ip == self.our_ip:
+                    continue
 
                 if self.target_ip and src_ip != self.target_ip:
                     continue
@@ -248,5 +276,3 @@ class SimpleRawOSPF(ITargetConnection):
                 print(f"[!] Recv error: {e}")
                 return b""
             
-
-
