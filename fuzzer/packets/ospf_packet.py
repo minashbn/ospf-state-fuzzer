@@ -9,9 +9,9 @@ def define_hello_init():
     define_ospf_header("hello") 
         
     with s_block("hello_body"):
-        s_dword(0xFFFFFF00, name="netmask", fuzzable=False, endian='>')
-        s_word(10, name="hello_interval", fuzzable=False, endian='>')
-        s_byte(0x02, name="options", fuzzable=False)
+        s_dword(0xFFFFFF00, name="netmask", fuzzable=True, endian='>')
+        s_word(10, name="hello_interval", fuzzable=True, endian='>')
+        s_byte(0x02, name="options", fuzzable=True)
         s_byte(1, name="priority", fuzzable=False)
         s_dword(40, name="dead_interval", fuzzable=False, endian='>')
         s_dword(0x00000000, name="dr", fuzzable=False, endian='>')
@@ -22,15 +22,15 @@ def define_hello_2way(params: dict = None): # type: ignore
     define_ospf_header("hello") 
     with s_block("way_hello_body"):
         # extract the valid value for fuzzable=false whitin scapy 
-        s_dword(0xFFFFFF00, name="way_netmask", fuzzable=False, endian='>')
-        s_word(10, name="way_hello_interval", fuzzable=False, endian='>')
-        s_byte(0x02, name="way_options", fuzzable=True) 
-        s_byte(1, name="way_priority", fuzzable=True)
-        s_dword(40, name="way_dead_interval", fuzzable=False, endian='>')
-        s_dword(0, name="way_dr", fuzzable=True, endian='>')
-        s_dword(0, name="way_bdr", fuzzable=True, endian='>')
+        s_dword(0xFFFFFF00, name="netmask", fuzzable=False, endian='>')
+        s_word(10, name="hello_interval", fuzzable=True, endian='>')
+        s_byte(0x02, name="options", fuzzable=True) 
+        s_byte(1, name="priority", fuzzable=True)
+        s_dword(40, name="dead_interval", fuzzable=True, endian='>')
+        s_dword(0, name="dr", fuzzable=True, endian='>')
+        s_dword(0, name="bdr", fuzzable=True, endian='>')
         
-        s_bytes(socket.inet_aton(TARGET_ROUTER_ID), name="way_neighbor_router_id", size=4, fuzzable=False)
+        s_bytes(socket.inet_aton(TARGET_ROUTER_ID), name="neighbor_router_id", size=4, fuzzable=False)
 
 
 
