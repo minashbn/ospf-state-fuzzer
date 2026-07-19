@@ -4,8 +4,8 @@ from .utils import *
 from boofuzz import REQUESTS
 import socket
 import struct
-from config import FUZZING_PHASE
-
+from config import FUZZING_PHASE,AGENT_PORT,TARGET_AGENT_IP
+agent_url=f"http://{TARGET_AGENT_IP}:{AGENT_PORT}"
 
 
 
@@ -13,6 +13,13 @@ def setup_state_2_hello_2way(target, fuzz_data_logger, session, *args, **kwargs)
     fuzz_data_logger.log_info("Preamble: Advancing to State init.")
     simulator = OSPFSimulator(func="reach_state_init")
     params = simulator.run()
+    payload = {
+        "options":params.get('options_int'),
+        "netmask":params.get('network_mask'),
+        "hello_interval":params.get('hello_interval'),
+        "dead_interval":params.get('router_dead_interval')
+    }
+    response=requests.post(f"{agent_url}/valid_2way", json=payload, timeout=5)
 
     # Store on session — accessible in all subsequent callbacks
     
@@ -31,21 +38,53 @@ def setup_state_2_hello_2way(target, fuzz_data_logger, session, *args, **kwargs)
             #  OSPF HELLO BODY FIELDS (Offsets 24+)
             # Only patch if the packet is long enough to contain the Hello body
             # =========================================================================
-            if len(data) >= 36:
-                # 2. Patch Network Mask (Offset 24, 4 bytes)
+        if len(data) >= 36:
+            test_case_name = getattr(session, 'current_test_case_name', '') or ""
+            test_case_lower = test_case_name.lower()
+            current_mutant = None
+
+            if "netmask" in test_case_lower:
+                current_mutant = "netmask"
+            elif "hello_interval" in test_case_lower :
+                current_mutant = "hello_interval"
+            elif "dead_interval" in test_case_lower :
+                current_mutant = "dead_interval"
+            elif "options" in test_case_lower:
+                current_mutant = "options"
+                
+            print("Detected active fuzz field:", current_mutant)
+
+            # 1. Patch Options (Offset 30, 1 byte)
+            if current_mutant != "options":
+                options_val = params.get('options')
+                if options_val is not None:
+                    # Options in OSPF Hello is 1 byte at offset 30
+                    struct.pack_into("!B", data, 30, int(options_val))
+            else:
+                fuzz_data_logger.log_info("Skipping options patch: Field is under active fuzzing.")
+
+            # 2. Patch Network Mask (Offset 24, 4 bytes)
+            if current_mutant != "netmask":
                 netmask = params.get('network_mask')
                 if netmask:
                     data[24:28] = socket.inet_aton(netmask)
+            else:
+                fuzz_data_logger.log_info("Skipping Netmask patch: Field is under active fuzzing.")
 
-                # 3. Patch Hello Interval (Offset 28, 2 bytes)
+            # 3. Patch Hello Interval (Offset 28, 2 bytes)
+            if current_mutant != "hello_interval":
                 hello_int = params.get('hello_interval')
                 if hello_int is not None:
                     struct.pack_into("!H", data, 28, int(hello_int))
+            else:
+                fuzz_data_logger.log_info("Skipping Hello Interval patch: Field is under active fuzzing.")
 
-                # 4. Patch Router Dead Interval (Offset 32, 4 bytes)
+            # 4. Patch Router Dead Interval (Offset 32, 4 bytes)
+            if current_mutant != "dead_interval":
                 dead_int = params.get('router_dead_interval')
                 if dead_int is not None:
                     struct.pack_into("!I", data, 32, int(dead_int))
+
 
             # --- 5. Dynamically Update Length (Offset 2, 2 bytes) ---
             struct.pack_into("!H", data, 2, len(data))
@@ -56,9 +95,9 @@ def setup_state_2_hello_2way(target, fuzz_data_logger, session, *args, **kwargs)
             checksum = ospf_checksum(bytes(data))
             data[12:14] = checksum
             
-            fuzz_data_logger.log_info(
-                f"Patched OSPF Header -> RID: {router_id}, Area: {area_id}, Checksum: {checksum.hex()}"
-            )
+            # fuzz_data_logger.log_info(
+            #     f"Patched OSPF Header -> RID: {router_id}, Area: {area_id}, Checksum: {checksum.hex()}"
+            # )
             
         return original_send(bytes(data))
         
@@ -176,7 +215,7 @@ def setup_state_4_Exchange(target, fuzz_data_logger, session, *args, **kwargs):
 
 
 def setup_state_5_Loading_lsr(target, fuzz_data_logger, session, *args, **kwargs):
-    fuzz_data_logger.log_info("Preamble: Advancing to State Exstart.")
+    fuzz_data_logger.log_info("Preamble: Advancing to State Exchange.")
     simulator = OSPFSimulator(func="reach_state_exchange")
     params = simulator.run()
 
@@ -233,3 +272,65 @@ def setup_state_5_Loading_lsr(target, fuzz_data_logger, session, *args, **kwargs
         return original_send(bytes(data))
     
     target.send = patched_send
+
+
+def setup_state_6_Loading_lsu(target, fuzz_data_logger, session, *args, **kwargs):
+    fuzz_data_logger.log_info("Preamble: Advancing to State LSR.")
+    simulator = OSPFSimulator(func="reach_state_lsu")
+    params = simulator.run()
+
+
+    original_send = target.send
+
+    def patched_send(data):
+        data = bytearray(data) 
+        
+        # Verify it's an OSPFv2 packet and has at least the minimum header size
+        if len(data) >= 24 and data[0] == 2:
+            
+            # --- 1. Patch Header Fields via external function ---
+            router_id, area_id = fix_header(data, params)
+
+            # --- 2. Inject Valid LSR Block 1 (If Packet Type is 3 / LSR) ---
+            # An LSR packet must be at least 36 bytes (24-byte header + 12-byte block)
+            if data[1] == 3 and len(data) >= 36:
+                try:
+                    # Extract values from the simulator params dictionary
+                    ls_type = int(params.get('req_ls_type', 1))
+                    ls_id_str = params.get('req_link_state_id', '0.0.0.0')
+                    adv_router_str = params.get('req_advertising_router', '0.0.0.1')
+                    
+                    # Pack values into network-byte-order (Big Endian) bytes
+                    ls_type_bytes = struct.pack('>I', ls_type)
+                    ls_id_bytes = socket.inet_aton(ls_id_str)
+                    adv_router_bytes = socket.inet_aton(adv_router_str)
+                    
+                    # Overwrite the first 12 payload bytes directly following the 24-byte header
+                    data[24:28] = ls_type_bytes      # LS Type (4 bytes)
+                    data[28:32] = ls_id_bytes        # Link State ID (4 bytes)
+                    data[32:36] = adv_router_bytes   # Advertising Router (4 bytes)
+                    
+                    fuzz_data_logger.log_info(
+                        f"Injected Valid LSR Block 1 -> Type: {ls_type}, ID: {ls_id_str}, AdvRouter: {adv_router_str}"
+                    )
+                except Exception as e:
+                    fuzz_data_logger.log_error(f"Failed to inject valid LSR fields: {str(e)}")
+
+            # --- 4. Dynamically Update Global OSPF Packet Length (Offset 2, 2 bytes) ---
+            struct.pack_into("!H", data, 2, len(data))
+
+            # --- 5. Clear and Recalculate Global OSPF Checksum (Offset 12, 2 bytes) ---
+            data[12] = 0
+            data[13] = 0
+            checksum = ospf_checksum(bytes(data))
+            data[12:14] = checksum
+            
+            fuzz_data_logger.log_info(
+                f"Patched OSPF Header -> RID: {router_id}, Area: {area_id}, Checksum: {checksum.hex()}"
+            )
+            
+        return original_send(bytes(data))
+    
+    target.send = patched_send
+
+

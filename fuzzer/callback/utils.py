@@ -89,15 +89,13 @@ def fletcher16_ospf_lsa(data: bytearray):
     return bytes([x, y])
 
 def reset_target_state(target, fuzz_data_logger, session, *args, **kwargs):
-    pass
-    raise BaseException("stop it")
 
-    # AGENT_URL = "http://192.168.56.101:26000/reset_ospf" 
-    # try:
-    #     response = requests.get(AGENT_URL, timeout=2)
-    #     if response.status_code == 200:
-    #         fuzz_data_logger.log_info("OSPF State cleared successfully via Agent.")
-    #     else:
-    #         fuzz_data_logger.log_fail(f"Agent failed to clear OSPF: {response.text}")
-    # except requests.exceptions.RequestException as e:
-    #     fuzz_data_logger.log_error(f"Failed to connect to Agent: {str(e)}")
+    AGENT_URL = "http://192.168.56.101:5000/reset_ospf" 
+    try:
+        response = requests.get(AGENT_URL, timeout=40)
+        if response.status_code == 200:
+            fuzz_data_logger.log_info("OSPF State cleared successfully via Agent.")
+        else:
+            fuzz_data_logger.log_fail(f"Agent failed to clear OSPF: {response.text}")
+    except requests.exceptions.RequestException as e:
+        fuzz_data_logger.log_error(f"Failed to connect to Agent: {str(e)}")
