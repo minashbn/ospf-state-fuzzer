@@ -15,9 +15,16 @@ import threading
 ETH_P_IP = 0x0800
 IPPROTO_OSPF = 89
 
+EXPECTED_OSPF_TYPES = {
+    1: 1,  # wait for Hello packet in init fuzzing
+    2: 1,  # wait for Hello packet in 2way fuzzing
+    3: 2,  # wait for DBD packet in exstart fuzzing
+    4: 2,  # wait for DBD packet in exchange fuzzing
+    5: 3,  # to do
+}
 
 class SimpleRawOSPF(ITargetConnection):
-    def __init__(self, interface, target_ip=None, response_timeout=5.0, hello_interval=40.0,agent_url="http://127.0.0.1:26000"):
+    def __init__(self, interface,fuzzing_state, target_ip=None, response_timeout=5.0, hello_interval=40.0,agent_url="http://127.0.0.1:5000"):
         self.interface = interface
         self.target_ip = target_ip
         self.response_timeout = response_timeout
@@ -28,43 +35,68 @@ class SimpleRawOSPF(ITargetConnection):
 
         self.pcap_mgr = PcapManager()
         self.agent_url = agent_url # <-- Store monitor endpoint
+
+        #save packet for status api
+        self.last_sent_packet = None
+        self.last_recv_packet = None
+
+        #fuzzing state
+        self.fuzzing_state = fuzzing_state
         
     def info(self): # type: ignore
         return f"Raw OSPF over {self.interface} with Heartbeat"
 
     def open(self):
-        self.pcap_mgr.rotate_pcap() # Prepares a temporary file
-        try:
-            # پیدا کردن IP لوکال متصل به این اینترفیس
-            import fcntl
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.pcap_mgr.rotate_pcap() # Prepares a temporary file
             try:
-                self.our_ip = socket.inet_ntoa(fcntl.ioctl(
-                    s.fileno(),
-                    0x8915,  # SIOCGIFADDR
-                    struct.pack('256s', bytes(self.interface[:15], 'utf-8'))
-                )[20:24])
-            except Exception:
-                self.our_ip = "192.168.56.102"  # IP پیش‌فرض
-            finally:
-                s.close()
+                # Find the local IP attached to this interface
+                import fcntl
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                try:
+                    self.our_ip = socket.inet_ntoa(fcntl.ioctl(
+                        s.fileno(),
+                        0x8915,  # SIOCGIFADDR
+                        struct.pack('256s', bytes(self.interface[:15], 'utf-8'))
+                    )[20:24])
+                except Exception:
+                    self.our_ip = "192.168.56.102"  # Fallback IP
+                finally:
+                    s.close()
 
-            self._sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(ETH_P_IP))
-            self._sock.bind((self.interface, 0))
-            self._sock.setblocking(False)
+                # Create a raw packet socket to capture IP traffic at layer 2
+                self._sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(ETH_P_IP))
+                self._sock.bind((self.interface, 0))
+                self._sock.setblocking(False)
+                
+                # --- Enable Promiscuous Mode to capture Multicast OSPF packets without Wireshark ---
+                SOL_PACKET = 263
+                PACKET_ADD_MEMBERSHIP = 1
+                PACKET_MR_PROMISC = 1
 
-            print(f"[+] Bound to {self.interface}. Local IP: {self.our_ip}")
-            return True
+                try:
+                    # Get the system interface index for the given interface name
+                    if_index = socket.if_nametoindex(self.interface)
+                    
+                    # Pack the struct packet_mreq: {ifindex, mr_type, mr_alen, mr_address}
+                    mreq = struct.pack("IHH8s", if_index, PACKET_MR_PROMISC, 0, b"")
+                    
+                    # Apply promiscuous membership option to the socket
+                    self._sock.setsockopt(SOL_PACKET, PACKET_ADD_MEMBERSHIP, mreq)
+                    print(f"[+] Promiscuous mode enabled on {self.interface}")
+                except Exception as e:
+                    print(f"[!] Warning: Failed to set promiscuous mode: {e}")
+                # ---------------------------------------------------------------------------------
 
+                print(f"[+] Bound to {self.interface}. Local IP: {self.our_ip}")
+                return True
 
-        except PermissionError:
-            print("[!!!] Run as root (raw sockets required)")
-            sys.exit(1)
-        except Exception as e:
-            print(f"[!!!] Socket open failed: {e}")
-            sys.exit(1)
-
-
+            except PermissionError:
+                print("[!!!] Run as root (raw sockets required)")
+                sys.exit(1)
+            except Exception as e:
+                print(f"[!!!] Socket open failed: {e}")
+                sys.exit(1)
+    
     def close(self):
         """Called by Boofuzz at the END of every testcase."""
         # 1. Close down the raw socket cleanly
@@ -130,14 +162,18 @@ class SimpleRawOSPF(ITargetConnection):
     
     def send(self, data):
         if self._sock:
-            # خواندن تمام پکت‌های انباشته شده تا زمانی که بافر خالی شود
+            # تخلیه هوشمند بافر: فقط پکت‌های ارسالی قبلی خودمان را پاک می‌کنیم
             while True:
                 try:
-                    # استفاده از پرچم MSG_DONTWAIT برای خواندن غیرمسدودکننده
-                    # و تخلیه سریع پکت‌های قدیمی
-                    self._sock.recv(65535, socket.MSG_DONTWAIT)
+                    # خواندن بدون توقف پکت متقاضی
+                    pkt_in_buffer = self._sock.recv(65535, socket.MSG_DONTWAIT)
+                    if len(pkt_in_buffer) > 34:
+                        # بررسی اینکه آیا IP فرستنده پکت داخل بافر، آی‌پی خود فازر است؟
+                        src_ip_buf = socket.inet_ntoa(pkt_in_buffer[26:30])
+                        if src_ip_buf != self.our_ip:
+                            # اگر پکت برای ما نبود (مثلا مال روتر بود)، تخلیه را متوقف کن تا در recv خوانده شود
+                            break
                 except (BlockingIOError, socket.error):
-                    # وقتی بافر کاملاً خالی شد، خطای مسدودکننده رخ می‌دهد و خارج می‌شویم
                     break
 
         try:
@@ -194,6 +230,8 @@ class SimpleRawOSPF(ITargetConnection):
 
             # 4. Assemble final frame and send
             final_packet = eth_header + ip_header + data
+            self.last_sent_packet = final_packet
+            print(self.last_sent_packet)
             if self._sock:
                 self._sock.send(final_packet)
 
@@ -228,7 +266,7 @@ class SimpleRawOSPF(ITargetConnection):
 
             try:
                 frame = self._sock.recv(65535)
-
+                self.last_recv_packet = frame
                 # ---------- Ethernet ----------
                 if len(frame) < 14:
                     continue
@@ -259,8 +297,16 @@ class SimpleRawOSPF(ITargetConnection):
 
                 if len(ip) < ihl:
                     continue
-
+                # ---------- OSPF Dynamic Filtering ----------
                 ospf_payload = ip[ihl:]
+                if len(ospf_payload) < 24: # Minimum length for OSPF header
+                    continue
+                
+                self.last_recv_packet = frame
+                print(
+                    f"[DEBUG] Valid OSPF Response Matched from {src_ip} → {dst_ip} "
+                    f"(len={len(ospf_payload)})"
+                )
 
                 print(
                     f"[DEBUG] OSPF packet {src_ip} → {dst_ip} "
