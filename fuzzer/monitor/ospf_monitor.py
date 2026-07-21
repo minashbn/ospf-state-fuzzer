@@ -131,7 +131,6 @@ class FRRMonitor(BaseMonitor):
         try:
             # 1. Change endpoint to /analyze_step and send payload via POST method
             response = requests.post(f"{self.agent_url}/analyze_step", json=payload, timeout=5)
-            
             # The agent returns 200 (stable) or 503 (vulnerable/unhealthy)
             if response.status_code in [200, 503]:
                 analysis_result = response.json()

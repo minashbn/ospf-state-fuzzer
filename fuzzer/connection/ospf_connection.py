@@ -167,12 +167,8 @@ class SimpleRawOSPF(ITargetConnection):
                 try:
                     # خواندن بدون توقف پکت متقاضی
                     pkt_in_buffer = self._sock.recv(65535, socket.MSG_DONTWAIT)
-                    if len(pkt_in_buffer) > 34:
-                        # بررسی اینکه آیا IP فرستنده پکت داخل بافر، آی‌پی خود فازر است؟
-                        src_ip_buf = socket.inet_ntoa(pkt_in_buffer[26:30])
-                        if src_ip_buf != self.our_ip:
-                            # اگر پکت برای ما نبود (مثلا مال روتر بود)، تخلیه را متوقف کن تا در recv خوانده شود
-                            break
+
+                        
                 except (BlockingIOError, socket.error):
                     break
 
