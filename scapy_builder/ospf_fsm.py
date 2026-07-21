@@ -10,6 +10,7 @@ from config import *
 from .ospf_packets import *
 from .ospf_handler import *
 from .ospf_neighbor import OSPFState
+from .ospf_parser import *
 import ipaddress
 from scapy.contrib.ospf import OSPF_LSA_Hdr
 
@@ -66,7 +67,7 @@ class OSPFStateMachine:
         self.neighbor.received_lsa_headers = []
         print("[*] State machine context has been completely cleared (Fresh Start).")
     
-    def get_neighbor_params(self) -> dict:
+    def get_neighbor_params(self,func) -> dict:
         """
         Return all captured neighbor parameters as a dictionary.
         These parameters are extracted during INIT state by sniffing the target's Hello packet.
@@ -80,17 +81,45 @@ class OSPFStateMachine:
         self.update_target_lsa_params()
         
         print(60*'***')
-        return {
+        data = {
             'router_id': self.neighbor.target_router_id,
             'area_id': self.neighbor.area_id,
+            'auth_type': self.neighbor_params['auth_type'],
+            'auth_data': self.neighbor_params['auth_data']
+        }
+        print(func)
+        additional_data={}
+        if "init" in func:
+            additional_data={
+                'network_mask': getattr(self.neighbor, 'network_mask', None),
+                'hello_interval': getattr(self.neighbor, 'hello_interval', None),
+                'options': getattr(self.neighbor, 'options', None),
+                'router_priority': self.neighbor.target_priority,
+                'router_dead_interval': getattr(self.neighbor, 'dead_interval', None),
+                'designated_router': self.neighbor.target_dr,
+                'backup_designated_router': self.neighbor.target_bdr,
+                'options_int':self.neighbor.options_int
+            }
+            
+        elif "2way" in func:
+            additional_data={
+                'mtu':self.neighbor.mtu,
+                'options':self.neighbor.ex_options,
+                'flags':self.neighbor.flags,
+                'options_int':self.neighbor.options_int
+            }
+            
+        data.update(additional_data)
+        return data
+        return {
+            
             'network_mask': getattr(self.neighbor, 'network_mask', None),
             'hello_interval': getattr(self.neighbor, 'hello_interval', None),
+            'options': getattr(self.neighbor, 'options', None),
             'router_priority': self.neighbor.target_priority,
             'router_dead_interval': getattr(self.neighbor, 'dead_interval', None),
             'designated_router': self.neighbor.target_dr,
             'backup_designated_router': self.neighbor.target_bdr,
-            'auth_type': getattr(self.neighbor, 'auth_type', None),
-            'auth_data': getattr(self.neighbor, 'auth_data', None),
 
             # FIX: Include the negotiated state parameters for BoFuzz to pick up
             'dbd_flags': getattr(self.neighbor, 'next_dbd_flags', 0x02),
@@ -198,6 +227,8 @@ class OSPFStateMachine:
             self.neighbor.target_priority = hello_data['priority']
             self.neighbor.target_dr = hello_data['dr']
             self.neighbor.target_bdr = hello_data['bdr']
+            self.neighbor.options=hello_data['options']
+            self.neighbor.options_int=hello_data['options_int']
             self.neighbor.last_hello_received = time.time()
             self.neighbor.set_state(OSPFState.INIT)
             
@@ -259,6 +290,28 @@ class OSPFStateMachine:
             print(f"[+] Bidirectional visibility confirmed")
             self.neighbor.last_hello_received = time.time()
             self.neighbor.set_state(OSPFState.TWO_WAY)
+
+            response = self.handler.wait_for_packet(
+                packet_type=2,
+                timeout=self.retry_timeout
+            )
+            
+            if not response:
+                print("[-] No DBD response received")
+                return False
+            
+            # Parse DBD
+            dbd_data = parse_dbd(response)
+            if not dbd_data:
+                print("[-] Failed to parse DBD response")
+                return False
+            self.neighbor.dbd_exstart=dbd_data['mtu']
+            self.neighbor.mtu=dbd_data['mtu']
+            self.neighbor.seq=dbd_data['seq']
+            self.neighbor.ex_options=dbd_data['options']
+            self.neighbor.flags=dbd_data['flags']
+                  
+            
             
             return True
         
@@ -298,21 +351,21 @@ class OSPFStateMachine:
             self._send_packet(dbd_pkt)
             
             # Wait for DBD proposal from target router
-            response = self.handler.wait_for_packet(
-                packet_type=2,
-                timeout=self.retry_timeout
-            )
+            # response = self.handler.wait_for_packet(
+            #     packet_type=2,
+            #     timeout=self.retry_timeout
+            # )
             
-            if not response:
-                print("[-] No DBD response received")
-                return False
+            # if not response:
+            #     print("[-] No DBD response received")
+            #     return False
             
-            # Parse DBD
-            dbd_data = parse_dbd(response)
-            if not dbd_data:
-                print("[-] Failed to parse DBD response")
-                return False
-            self.neighbor.mtu=dbd_data['mtu']
+            # # Parse DBD
+            dbd_data = self.neighbor.dbd_exstart
+            # if not dbd_data:
+            #     print("[-] Failed to parse DBD response")
+            #     return False
+            # self.neighbor.mtu=dbd_data['mtu']
             
             # Determine master/slave by comparing Router IDs
             our_rid = ipaddress.IPv4Address(self.neighbor.our_router_id)

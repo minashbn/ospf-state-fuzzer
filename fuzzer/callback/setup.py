@@ -108,7 +108,12 @@ def setup_state_3_ExStart(target, fuzz_data_logger, session, *args, **kwargs):
     fuzz_data_logger.log_info("Preamble: Advancing to State 2way.")
     simulator = OSPFSimulator(func="reach_state_2way")
     params = simulator.run()
-    
+    payload = {
+        "mtu":params.get('mtu'),
+        "options":params.get('options_int')
+    }
+    response=requests.post(f"{agent_url}/valid_2way", json=payload, timeout=5)
+
 
     original_send = target.send
     
@@ -122,6 +127,46 @@ def setup_state_3_ExStart(target, fuzz_data_logger, session, *args, **kwargs):
             # We pass both the mutable 'data' array and the 'params' dictionary
             router_id, area_id = fix_header(data, params)
 
+            if len(data) >= 32:
+                test_case_name = getattr(session, 'current_test_case_name', '') or ""
+                test_case_lower = test_case_name.lower()
+                current_mutant = None
+
+                if "mtu" in test_case_lower:
+                    current_mutant = "mtu"
+                elif "options" in test_case_lower:
+                    current_mutant = "options"
+                elif "flags" in test_case_lower:
+                    current_mutant = "flags"
+               
+                    
+                print("Detected active fuzz field:", current_mutant)
+
+                # 1. Patch Interface MTU (Offset 24, 2 bytes)
+                if current_mutant != "mtu":
+                    mtu_val = params.get('mtu')
+                    if mtu_val is not None:
+                        struct.pack_into("!H", data, 24, int(mtu_val))
+                else:
+                    fuzz_data_logger.log_info("Skipping MTU patch: Field is under active fuzzing.")
+
+                # 2. Patch Options (Offset 26, 1 byte)
+                if current_mutant != "options":
+                    options_val = params.get('options')
+                    if options_val is not None:
+                        struct.pack_into("!B", data, 26, int(options_val))
+                else:
+                    fuzz_data_logger.log_info("Skipping Options patch: Field is under active fuzzing.")
+
+                # 3. Patch DD Flags (Offset 27, 1 byte)
+                if current_mutant != "flags":
+                    flags_val = params.get('flags')
+                    if flags_val is not None:
+                        struct.pack_into("!B", data, 27, int(flags_val))
+                else:
+                    fuzz_data_logger.log_info("Skipping Flags patch: Field is under active fuzzing.")
+
+              
             # --- 2. Dynamically Update Length (Offset 2, 2 bytes) ---
             struct.pack_into("!H", data, 2, len(data))
 
@@ -136,7 +181,7 @@ def setup_state_3_ExStart(target, fuzz_data_logger, session, *args, **kwargs):
             )
             
         return original_send(bytes(data))
-        
+    
     target.send = patched_send
 
 

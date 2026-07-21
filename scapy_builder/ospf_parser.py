@@ -46,6 +46,8 @@ def parse_dbd(pkt) -> dict:
 
     dbd = pkt[OSPF_DBDesc]
     ospf_hdr = pkt[OSPF_Hdr]
+    options_int = int(dbd.options) if dbd.options is not None else 0
+
 
     # Parse DBD flags (I/M/MS bits)
     flags = dbd.dbdescr
@@ -73,6 +75,8 @@ def parse_dbd(pkt) -> dict:
         'seq': dbd.ddseq,
         'mtu': dbd.mtu,
         'options': dbd.options,
+        'options_int':options_int,
+        'flags':flags,
         'init': init,
         'more': more,
         'master': master,

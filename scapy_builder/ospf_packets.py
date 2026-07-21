@@ -301,7 +301,7 @@ def extract_neighbor_params(hello_packet: Packet, our_router_id: str, our_ip: st
         # From OSPF Header
         'area_id': ospf_hdr.area if hasattr(ospf_hdr, 'area') else '0.0.0.0',
         'auth_type': ospf_hdr.authtype if hasattr(ospf_hdr, 'authtype') else 0,
-        'auth_key': ospf_hdr.authdata if hasattr(ospf_hdr, 'authdata') else b'\x00' * 8,
+        'auth_data': ospf_hdr.authdata if hasattr(ospf_hdr, 'authdata') else b'\x00' * 8,
         
         # From Hello packet
         'network_mask': ospf_hello.mask if hasattr(ospf_hello, 'mask') else '255.255.255.0',
