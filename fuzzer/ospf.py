@@ -20,10 +20,11 @@ from .monitor.ospf_monitor import *
 # State ID: (Packet Definition Func, "boofuzz_string_identifier", Callback Func, Reset Timeout)
 STATE_HANDLERS = {
     1: (define_hello_init, "hello_init", None,0),
-    2: (define_hello_2way, "hello_2way", setup_state_2_hello_2way,10.1),
-    3: (define_dbd_ExStart, "ospf_ExStart",setup_state_3_ExStart,10.1),
-    4: (define_dbd_ExChange, "dbd_Exchange", setup_state_4_Exchange,10.1),
-    5: (define_lsr, "ospf_lsr", setup_state_5_Loading_lsr,10.1),
+    2: (define_hello_2way, "hello_2way", setup_state_2_hello_2way,10.1,),
+    3: (define_dbd_ExStart, "ospf_ExStart",setup_state_3_ExStart,7.1),
+    4: (define_dbd_ExChange, "dbd_Exchange", setup_state_4_Exchange,7.1),
+    5: (define_lsr, "ospf_lsr", setup_state_5_Loading_lsr,7.1),
+    6: (define_lsu, "ospf_lsu", setup_state_6_Loading_lsr,7.1),
 }
 
 
@@ -45,16 +46,17 @@ def fuzzing(state):
     # 2. Setup Connection to Docker Container (For Fuzzing)
     connection = SimpleRawOSPF(
     interface="enp0s8", 
+    fuzzing_state=state,
     target_ip="192.168.56.201", 
     response_timeout=timeout,  # 
     agent_url="http://{TARGET_AGENT_IP}:{AGENT_PORT}"
     )
-    monitor = FRRMonitor(TARGET_AGENT_IP, AGENT_PORT)
+    monitor = FRRMonitor(TARGET_AGENT_IP,state ,connection,AGENT_PORT)
     target = Target(connection=connection, monitors=[monitor])    # 3. Setup Monitor to Host VM (For Health Checks)
     # 4. Setup Session
     session = Session(
         target=target,
-        sleep_time=5,
+        sleep_time=2,
         fuzz_loggers=[FuzzLoggerText()],
         # pre_send_callbacks=[update_ospf_packet],
         post_test_case_callbacks=[reset_target_state],

@@ -13,7 +13,7 @@ from .ospf_neighbor import OSPFState
 from .ospf_parser import *
 import ipaddress
 from scapy.contrib.ospf import OSPF_LSA_Hdr
-
+from pcap_manager import PcapManager
 
 class OSPFStateMachine:
     """
@@ -28,9 +28,11 @@ class OSPFStateMachine:
         self.max_retries = neighbor.max_retries
         self.retry_timeout = neighbor.retry_timeout
         self.neighbor_params = None  # Extracted from target's Hello packet
+        self.pcap_mgr = PcapManager()
         
     def _send_packet(self, pkt):
         """Send OSPF packet on configured interface"""
+        self.pcap_mgr.write_packet(pkt)
         sendp(pkt, iface=IFACE, verbose=False)
         
     def _retry_wrapper(self, func, state_name: str):
@@ -100,6 +102,8 @@ class OSPFStateMachine:
                 'backup_designated_router': self.neighbor.target_bdr,
                 'options_int':self.neighbor.options_int
             }
+            data.update(additional_data)
+            return data
             
         elif "2way" in func:
             additional_data={
@@ -108,9 +112,24 @@ class OSPFStateMachine:
                 'flags':self.neighbor.flags,
                 'options_int':self.neighbor.options_int
             }
+            data.update(additional_data)
+            return data
+        
+        elif "exstart" in func:
+            additional_data={
+                'mtu':self.neighbor.mtu,
+                'options':self.neighbor.ex_options,
+                'flags':self.neighbor.flags,
+                'options_int':self.neighbor.options_int,
+                'seq':self.neighbor.dd_sequence,
+            }
+            data.update(additional_data)
+            return data
+
             
-        data.update(additional_data)
-        return data
+
+            
+        
         return {
             
             'network_mask': getattr(self.neighbor, 'network_mask', None),
@@ -162,6 +181,7 @@ class OSPFStateMachine:
         Transition: DOWN -> INIT
         Pre-sniff target Hello, extract parameters, then send synchronized Hello
         """
+        self.pcap_mgr.rotate_pcap()
         def attempt_init():
             print("[*] Waiting for target Hello packet to extract parameters...")
             
@@ -305,7 +325,7 @@ class OSPFStateMachine:
             if not dbd_data:
                 print("[-] Failed to parse DBD response")
                 return False
-            self.neighbor.dbd_exstart=dbd_data['mtu']
+            self.neighbor.dbd_exstart=dbd_data
             self.neighbor.mtu=dbd_data['mtu']
             self.neighbor.seq=dbd_data['seq']
             self.neighbor.ex_options=dbd_data['options']
@@ -388,7 +408,8 @@ class OSPFStateMachine:
                     print("[-] Invalid DBD ACK received from Slave")
                     return False
                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
-                self.neighbor.target_dd_sequence = slave_dbd['seq']
+                self.neighbor.dd_sequence =our_seq + 1
+                self.neighbor.flags = 0x01
                 self.neighbor.received_lsa_headers = slave_dbd['lsa_headers']    
                 print(slave_dbd['lsa_headers'])  
                 print(f"[+] Slave ACK received. Received {len(slave_dbd['lsa_headers'])} LSA headers.")
@@ -399,18 +420,11 @@ class OSPFStateMachine:
                 
                 # As Slave, set our sequence number to match the Master's sequence number
                 master_seq = dbd_data['seq']
-                self.neighbor.dd_sequence = master_seq
-                self.neighbor.target_dd_sequence = master_seq
+                self.neighbor.dd_sequence =master_seq
+                self.neighbor.flags = 0x00
                 
-                # Immediately send the ACK packet to notify the Master of our role acceptance
-                print("[*] Slave mode: Sending ACK packet to Master...")
-                ack_pkt = build_dbd_packet(
-                    neighbor_params=self.neighbor_params,
-                    dd_sequence=master_seq,
-                    flags=0x02,  # I=0, M=1, MS=0 (Slave role confirmation)
-                )
-                ack_pkt = wrap_in_ip(ack_pkt)
-                self._send_packet(ack_pkt) # Call your packet sending method here
+                
+                
 
             # Once both sides accept their roles, transition the neighbor state to EXSTART
             self.neighbor.set_state(OSPFState.EXSTART) 
@@ -525,7 +539,7 @@ class OSPFStateMachine:
 
         return self._retry_wrapper(attempt_exchange, "EXCHANGE state")
 
-    def reach_state_lsu(self) -> bool:
+    def reach_state_lsr(self) -> bool:
             """
             Transition: EXCHANGE -> LOADING -> FULL
             Uses build_lsr_packet to request missing LSAs, processes target response,

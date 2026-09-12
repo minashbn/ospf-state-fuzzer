@@ -137,7 +137,7 @@ class OSPFSimulator:
                 logger.error("[-] Failed to reach FULL state")
                 return {}
             
-            param=self.fsm.get_neighbor_params() # type: ignore
+            param=self.fsm.get_neighbor_params(self.func) # type: ignore
             
             logger.info("[+] FULL adjacency established!")
             logger.info("")

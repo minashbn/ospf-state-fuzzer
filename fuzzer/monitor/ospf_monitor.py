@@ -5,6 +5,7 @@ from boofuzz import BaseMonitor
 from scapy_builder.ospf_parser import *
 from scapy.layers.l2 import Ether
 from scapy.contrib.ospf import OSPF_Hdr
+from pcap_manager import PcapManager
 
 #according to type field in ospf packet
 STATE_PARSERS = {
@@ -23,6 +24,7 @@ class FRRMonitor(BaseMonitor):
         self.name = "FRRMonitor"
         self.fuzzing_state=fuzzing_state
         self.connection_obj = connection_obj
+        self.pcap_mgr = PcapManager()
         
     # def alive(self) -> bool:  # type: ignore[override]
     #     """
@@ -110,6 +112,8 @@ class FRRMonitor(BaseMonitor):
         
         sent_packet_raw = getattr(self.connection_obj, 'last_sent_packet', None)
         recv_packet_raw = getattr(self.connection_obj, 'last_recv_packet', None)
+        self.pcap_mgr.write_packet(sent_packet_raw)
+        self.pcap_mgr.write_packet(recv_packet_raw)
         
         #  reset for next capture
         if self.connection_obj:
@@ -143,6 +147,7 @@ class FRRMonitor(BaseMonitor):
                         f"     Reason: OSPFD daemon or container R1 has halted.\n"
                         f"     Target Status: {analysis_result.get('status')}"
                     )
+                    self.pcap_mgr.finalize_testcase(bug_detected=False, crash_detected=True)
                     if fuzz_data_logger:
                         fuzz_data_logger.log_fail(msg)
                     else:
@@ -158,6 +163,7 @@ class FRRMonitor(BaseMonitor):
                 print(bugs)
                 
                 if active_violations:
+                    self.pcap_mgr.finalize_testcase(bug_detected=True, crash_detected=False,bugs=bugs)
                     msg = (
                         f"OSPF PROTOCOL VULNERABILITY DETECTED!\n"
                         f"     Triggered Violations: {', '.join(active_violations)}\n"

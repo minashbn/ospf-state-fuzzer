@@ -41,21 +41,10 @@ def setup_state_2_hello_2way(target, fuzz_data_logger, session, *args, **kwargs)
         if len(data) >= 36:
             test_case_name = getattr(session, 'current_test_case_name', '') or ""
             test_case_lower = test_case_name.lower()
-            current_mutant = None
-
-            if "netmask" in test_case_lower:
-                current_mutant = "netmask"
-            elif "hello_interval" in test_case_lower :
-                current_mutant = "hello_interval"
-            elif "dead_interval" in test_case_lower :
-                current_mutant = "dead_interval"
-            elif "options" in test_case_lower:
-                current_mutant = "options"
-                
-            print("Detected active fuzz field:", current_mutant)
-
+            print(test_case_lower)
+            
             # 1. Patch Options (Offset 30, 1 byte)
-            if current_mutant != "options":
+            if not "options" in test_case_lower:
                 options_val = params.get('options')
                 if options_val is not None:
                     # Options in OSPF Hello is 1 byte at offset 30
@@ -64,15 +53,12 @@ def setup_state_2_hello_2way(target, fuzz_data_logger, session, *args, **kwargs)
                 fuzz_data_logger.log_info("Skipping options patch: Field is under active fuzzing.")
 
             # 2. Patch Network Mask (Offset 24, 4 bytes)
-            if current_mutant != "netmask":
-                netmask = params.get('network_mask')
-                if netmask:
-                    data[24:28] = socket.inet_aton(netmask)
-            else:
-                fuzz_data_logger.log_info("Skipping Netmask patch: Field is under active fuzzing.")
+            netmask = params.get('network_mask')
+            if netmask:
+                data[24:28] = socket.inet_aton(netmask)
 
             # 3. Patch Hello Interval (Offset 28, 2 bytes)
-            if current_mutant != "hello_interval":
+            if not "hello_interval" in test_case_lower:
                 hello_int = params.get('hello_interval')
                 if hello_int is not None:
                     struct.pack_into("!H", data, 28, int(hello_int))
@@ -80,7 +66,7 @@ def setup_state_2_hello_2way(target, fuzz_data_logger, session, *args, **kwargs)
                 fuzz_data_logger.log_info("Skipping Hello Interval patch: Field is under active fuzzing.")
 
             # 4. Patch Router Dead Interval (Offset 32, 4 bytes)
-            if current_mutant != "dead_interval":
+            if not "dead_interval" in test_case_lower:
                 dead_int = params.get('router_dead_interval')
                 if dead_int is not None:
                     struct.pack_into("!I", data, 32, int(dead_int))
@@ -130,20 +116,13 @@ def setup_state_3_ExStart(target, fuzz_data_logger, session, *args, **kwargs):
             if len(data) >= 32:
                 test_case_name = getattr(session, 'current_test_case_name', '') or ""
                 test_case_lower = test_case_name.lower()
-                current_mutant = None
-
-                if "mtu" in test_case_lower:
-                    current_mutant = "mtu"
-                elif "options" in test_case_lower:
-                    current_mutant = "options"
-                elif "flags" in test_case_lower:
-                    current_mutant = "flags"
+          
+                
                
                     
-                print("Detected active fuzz field:", current_mutant)
 
                 # 1. Patch Interface MTU (Offset 24, 2 bytes)
-                if current_mutant != "mtu":
+                if not "mtu" in test_case_lower:
                     mtu_val = params.get('mtu')
                     if mtu_val is not None:
                         struct.pack_into("!H", data, 24, int(mtu_val))
@@ -151,7 +130,7 @@ def setup_state_3_ExStart(target, fuzz_data_logger, session, *args, **kwargs):
                     fuzz_data_logger.log_info("Skipping MTU patch: Field is under active fuzzing.")
 
                 # 2. Patch Options (Offset 26, 1 byte)
-                if current_mutant != "options":
+                if not "options" in test_case_lower:
                     options_val = params.get('options')
                     if options_val is not None:
                         struct.pack_into("!B", data, 26, int(options_val))
@@ -159,7 +138,7 @@ def setup_state_3_ExStart(target, fuzz_data_logger, session, *args, **kwargs):
                     fuzz_data_logger.log_info("Skipping Options patch: Field is under active fuzzing.")
 
                 # 3. Patch DD Flags (Offset 27, 1 byte)
-                if current_mutant != "flags":
+                if not "flags" in test_case_lower:
                     flags_val = params.get('flags')
                     if flags_val is not None:
                         struct.pack_into("!B", data, 27, int(flags_val))
@@ -202,18 +181,44 @@ def setup_state_4_Exchange(target, fuzz_data_logger, session, *args, **kwargs):
             router_id, area_id = fix_header(data, params)
 
             # --- 2. Patch Live DBD State Machine Parameters ---
-            dbd_flags = params.get('dbd_flags', 0x02)
-            dd_seq = params.get('dd_seq_number', 0x00000001)
-            dd_mtu = params.get('mtu', 1500)
-            struct.pack_into("!I", data, 28, dd_seq)     # Packs 4 bytes at offset 28-31
+            test_case_name = getattr(session, 'current_test_case_name', '') or ""
+            test_case_lower = test_case_name.lower()
 
-            if len(data) >= 32 and FUZZING_PHASE == "LSA_PARSING":
-                struct.pack_into("!H", data, 24, dd_mtu)    # Packs 2 bytes at offset 24 & 25
-                struct.pack_into("!B", data, 27, dbd_flags)  # Packs 1 byte at offset 27
-            
+            # 2. Patch Interface MTU (Offset 24, 2 bytes)
+            if not "mtu" in test_case_lower:
+                mtu_val = params.get('mtu', 1500)
+                if mtu_val is not None:
+                    struct.pack_into("!H", data, 24, int(mtu_val))
+            else:
+                fuzz_data_logger.log_info("Skipping MTU patch: Field is under active fuzzing.")
+
+            # 3. Patch Options (Offset 26, 1 byte)
+            if not "options" in test_case_lower:
+                options_val = params.get('options')
+                if options_val is not None:
+                    struct.pack_into("!B", data, 26, int(options_val))
+            else:
+                fuzz_data_logger.log_info("Skipping Options patch: Field is under active fuzzing.")
+
+            # 4. Patch DD Flags (Offset 27, 1 byte)
+            if not "flags" in test_case_lower:
+                flags_val = params.get('flags', 0x02)
+                if flags_val is not None:
+                    struct.pack_into("!B", data, 27, int(flags_val))
+            else:
+                fuzz_data_logger.log_info("Skipping Flags patch: Field is under active fuzzing.")
+
+            # 5. Patch DD Sequence Number (Offset 28, 4 bytes)
+            if not "seq" in test_case_lower:
+                seq_val = params.get('seq', 0x00000001)
+                if seq_val is not None:
+                    struct.pack_into("!I", data, 28, int(seq_val))
+            else:
+                fuzz_data_logger.log_info("Skipping Sequence Number patch: Field is under active fuzzing.")
             # --- 3. Calculate and Patch LSA Header Parameters ---
             if len(data) >= 52:  # 32 (offset) + 20 (minimum LSA header size)
                 lsa_start_offset = 32
+                
                 
                 # 1. Read the LSA Type dynamically from the packet (Offset 35)
                 lsa_type = data[35] 
@@ -221,11 +226,21 @@ def setup_state_4_Exchange(target, fuzz_data_logger, session, *args, **kwargs):
                 # 2. Compute the physical length in our buffer
                 lsa_total_length = len(data) - lsa_start_offset
                 
-                # 3. Adjust length based on OSPF specifications
-                if lsa_type == 1 and lsa_total_length == 20:
-                    lsa_total_length = 24
-                elif lsa_type == 2 and lsa_total_length == 20:
-                    lsa_total_length = 24
+                min_lsa_lengths = {
+                    1: 24,  # Router-LSA: 20 bytes Header + 4 bytes (Flags + # Links)
+                    2: 24,  # Network-LSA: 20 bytes Header + 4 bytes (Network Mask)
+                    3: 28,  # Summary-LSA (IP network): 20 bytes Header + 4 bytes Mask + 4 bytes Metric
+                    4: 28,  # Summary-LSA (ASBR): 20 bytes Header + 4 bytes Mask + 4 bytes Metric
+                    5: 36,  # AS-External-LSA: 20 bytes Header + 4 bytes Mask + 12 bytes External fields
+                    7: 36,  # NSSA External LSA (RFC 3101): Same layout as Type 5
+                }
+
+                # If we only have the 20-byte LSA header in the buffer, set length to the type's minimum
+                if lsa_total_length == 20:
+                    lsa_total_length = min_lsa_lengths.get(lsa_type, 20)
+                elif lsa_total_length < min_lsa_lengths.get(lsa_type, 20):
+                    # If fuzzing shortened the buffer below the valid spec minimum for this type, enforce standard minimum
+                    lsa_total_length = min_lsa_lengths.get(lsa_type, 20)
 
                 # 4. FIX: Write LSA Length dynamically to the correct offset (50)
                 struct.pack_into("!H", data, 50, lsa_total_length)
@@ -319,9 +334,9 @@ def setup_state_5_Loading_lsr(target, fuzz_data_logger, session, *args, **kwargs
     target.send = patched_send
 
 
-def setup_state_6_Loading_lsu(target, fuzz_data_logger, session, *args, **kwargs):
+def setup_state_6_Loading_lsr(target, fuzz_data_logger, session, *args, **kwargs):
     fuzz_data_logger.log_info("Preamble: Advancing to State LSR.")
-    simulator = OSPFSimulator(func="reach_state_lsu")
+    simulator = OSPFSimulator(func="reach_state_lsr")
     params = simulator.run()
 
 

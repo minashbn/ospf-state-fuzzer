@@ -33,7 +33,6 @@ class SimpleRawOSPF(ITargetConnection):
         self._sock = None
         self._expecting_response = True
 
-        self.pcap_mgr = PcapManager()
         self.agent_url = agent_url # <-- Store monitor endpoint
 
         #save packet for status api
@@ -47,7 +46,7 @@ class SimpleRawOSPF(ITargetConnection):
         return f"Raw OSPF over {self.interface} with Heartbeat"
 
     def open(self):
-            self.pcap_mgr.rotate_pcap() # Prepares a temporary file
+            
             try:
                 # Find the local IP attached to this interface
                 import fcntl
@@ -107,27 +106,7 @@ class SimpleRawOSPF(ITargetConnection):
         # 2. Ask the monitoring agent if a bug happened during this testcase
         bug_detected = False
         crash_detected = False
-        
-        # try:
-        #     response = requests.get(f"{self.agent_url}/status", timeout=4)
-        #     if response.status_code == 200:
-        #         data = response.json()
-                
-        #         # Check for crash
-        #         crash_detected = data.get("crashed", False)
-                
-        #         # Check if any custom-coded bugs triggered
-        #         bugs = data.get("bugs_detected", {})
-        #         bug_detected = any(bugs.values())
-                
-        # except Exception as e:
-        #     print(f"[!] Warning: Could not reach monitoring agent: {e}")
-        #     # If the agent can't be reached, the router might have caused a total system hang.
-        #     # Safe bet: assume a crash happened so we save the PCAP.
-        #     crash_detected = True 
-
-        # # 3. Tell PcapManager to finalize (keep or throw away)
-        # self.pcap_mgr.finalize_testcase(bug_detected=bug_detected, crash_detected=False)
+     
 
 
     def get_mac_address(self,ifname):
@@ -232,7 +211,6 @@ class SimpleRawOSPF(ITargetConnection):
                 self._sock.send(final_packet)
 
             #save as pcap
-            self.pcap_mgr.write_packet(final_packet)
 
             self._expecting_response = True
 

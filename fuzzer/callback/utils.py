@@ -55,23 +55,22 @@ def fix_header(data, params):
     return router_id, area_id
 
 
-def fletcher16_ospf_lsa(data: bytearray):
+def fletcher16_ospf_lsa(data: bytearray) -> bytes:
     """
-    Calculates the Fletcher-16 checksum for an OSPF LSA Header 
-    according to RFC 2328 / RFC 905.
-    The checksum field is at bytes 14 and 15 of the LSA header.
+    Calculates Fletcher-16 checksum for OSPF LSA (RFC 2328 / RFC 905).
+    - Offsets 0, 1 (LS Age) MUST be treated as 0.
+    - Offsets 14, 15 (LS Checksum) MUST be treated as 0.
     """
     length = len(data)
     if length < 20:
         return b"\x00\x00"
 
-    # Fletcher-16 algorithm variables
     c0 = 0
     c1 = 0
     
-    # We must calculate the checksum as if the checksum bytes (offsets 14 and 15) are 0
     for i in range(length):
-        if i == 14 or i == 15:
+        # LS Age (0, 1) and LS Checksum (14, 15) must be zeroed during calculation
+        if i in (0, 1, 14, 15):
             val = 0
         else:
             val = data[i]
@@ -79,7 +78,6 @@ def fletcher16_ospf_lsa(data: bytearray):
         c0 = (c0 + val) % 255
         c1 = (c1 + c0) % 255
 
-    # Formula to derive the check bytes to be placed in the packet
     x = ((length - 14) * c0 - c1) % 255
     y = ((length - 13) * -c0 + c1) % 255
 
